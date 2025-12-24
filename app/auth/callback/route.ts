@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, createServiceClient } from '@/lib/supabase/server';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -10,57 +10,92 @@ export async function GET(request: Request) {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://occm.srv1165028.hstgr.cloud';
 
   if (code) {
+    // Use regular client for session exchange (needs cookies)
     const supabase = await createClient();
     const { data: sessionData, error } = await supabase.auth.exchangeCodeForSession(code);
 
-    if (!error && sessionData?.user) {
+    if (error) {
+      console.error('Auth callback - session exchange error:', error.message);
+      return NextResponse.redirect(`${appUrl}/login?error=auth`);
+    }
+
+    if (sessionData?.user) {
       const user = sessionData.user;
+      const userEmail = user.email?.toLowerCase().trim();
 
-      // Check if this user's email matches a pending committee member invitation
-      // Use case-insensitive matching with ilike
-      if (user.email) {
-        const userEmail = user.email.toLowerCase().trim();
+      console.log('Auth callback - User logged in:', {
+        userId: user.id,
+        email: userEmail
+      });
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: pendingMember } = await (supabase as any)
-          .from('committee_members')
-          .select('id, user_id, is_active')
-          .ilike('email', userEmail)
-          .is('user_id', null)
-          .maybeSingle();
+      if (userEmail) {
+        // Use service role client to bypass RLS for database updates
+        const adminClient = createServiceClient();
 
-        if (pendingMember) {
-          // Link the user to the committee member and activate them
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await (supabase as any)
+        try {
+          // Find committee member with matching email (case-insensitive)
+          const { data: pendingMember, error: findError } = await adminClient
             .from('committee_members')
-            .update({
-              user_id: user.id,
-              is_active: true,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', pendingMember.id);
+            .select('id, user_id, is_active, email')
+            .ilike('email', userEmail)
+            .is('user_id', null)
+            .maybeSingle();
+
+          if (findError) {
+            console.error('Auth callback - Error finding pending member:', findError.message);
+          }
+
+          if (pendingMember) {
+            console.log('Auth callback - Found pending member to link:', {
+              memberId: pendingMember.id,
+              memberEmail: pendingMember.email
+            });
+
+            // Link the user to the committee member and activate them
+            const { error: updateError } = await adminClient
+              .from('committee_members')
+              .update({
+                user_id: user.id,
+                is_active: true,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', pendingMember.id);
+
+            if (updateError) {
+              console.error('Auth callback - Error linking user:', updateError.message);
+            } else {
+              console.log('Auth callback - Successfully linked user to committee member');
+            }
+          } else {
+            console.log('Auth callback - No pending member found for email:', userEmail);
+
+            // Check if already linked (user might be logging in again)
+            const { data: existingMember } = await adminClient
+              .from('committee_members')
+              .select('id, is_active')
+              .eq('user_id', user.id)
+              .maybeSingle();
+
+            if (existingMember) {
+              console.log('Auth callback - User already linked to member:', existingMember.id);
+
+              // Ensure they're active
+              if (!existingMember.is_active) {
+                await adminClient
+                  .from('committee_members')
+                  .update({
+                    is_active: true,
+                    updated_at: new Date().toISOString(),
+                  })
+                  .eq('id', existingMember.id);
+              }
+            } else {
+              console.log('Auth callback - User not found in committee_members, they may not have been invited');
+            }
+          }
+        } catch (err) {
+          console.error('Auth callback - Unexpected error:', err);
         }
-      }
-
-      // Also check if user is already linked but not active (edge case)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: existingMember } = await (supabase as any)
-        .from('committee_members')
-        .select('id, is_active')
-        .eq('user_id', user.id)
-        .eq('is_active', false)
-        .maybeSingle();
-
-      if (existingMember) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (supabase as any)
-          .from('committee_members')
-          .update({
-            is_active: true,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', existingMember.id);
       }
 
       return NextResponse.redirect(`${appUrl}${next}`);
@@ -68,5 +103,6 @@ export async function GET(request: Request) {
   }
 
   // Return the user to an error page with some instructions
+  console.error('Auth callback - No code or session data');
   return NextResponse.redirect(`${appUrl}/login?error=auth`);
 }
