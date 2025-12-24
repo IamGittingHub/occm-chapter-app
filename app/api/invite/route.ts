@@ -48,7 +48,9 @@ export async function POST(request: Request) {
     }
 
     const body: InviteRequestBody = await request.json();
-    const { email, first_name, last_name, gender, phone } = body;
+    const { first_name, last_name, gender, phone } = body;
+    // Normalize email to lowercase to ensure consistent matching
+    const email = body.email?.toLowerCase().trim();
 
     if (!email || !first_name || !last_name || !gender) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -56,12 +58,12 @@ export async function POST(request: Request) {
 
     const adminClient = createAdminClient();
 
-    // Check if committee member with this email already exists
+    // Check if committee member with this email already exists (case-insensitive)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: existingMember } = await (supabase as any)
       .from('committee_members')
       .select('id, is_active, user_id')
-      .eq('email', email)
+      .ilike('email', email)
       .maybeSingle();
 
     if (existingMember) {
@@ -78,9 +80,9 @@ export async function POST(request: Request) {
     let authUser: { id: string } | null = null;
     let inviteError: Error | null = null;
 
-    // First check if user already exists in auth
+    // First check if user already exists in auth (case-insensitive)
     const { data: existingUsers } = await adminClient.auth.admin.listUsers();
-    const existingAuthUser = existingUsers?.users?.find(u => u.email === email);
+    const existingAuthUser = existingUsers?.users?.find(u => u.email?.toLowerCase() === email);
 
     if (existingAuthUser) {
       // User already exists in auth, just create/update committee member

@@ -43,12 +43,13 @@ export async function transferUnresponsiveMember(
     return { success: false, message: 'Member not found.' };
   }
 
-  // Get all same-gender committee members
+  // Get all same-gender committee members (excluding example/admin accounts)
   const { data: allCommittee, error: committeeError } = await supabase
     .from('committee_members')
     .select('*')
     .eq('is_active', true)
-    .eq('gender', member.gender);
+    .eq('gender', member.gender)
+    .not('email', 'like', '%@example.com');
 
   if (committeeError || !allCommittee || allCommittee.length === 0) {
     return { success: false, message: 'No committee members available for transfer.' };

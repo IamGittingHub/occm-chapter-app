@@ -60,11 +60,12 @@ export async function generateInitialCommunicationAssignments(
     return { success: false, message: 'No active members found to assign.' };
   }
 
-  // Get active committee members
+  // Get active committee members (excluding example/admin accounts)
   const { data: committeeMembersData, error: committeeError } = await supabase
     .from('committee_members')
     .select('*')
-    .eq('is_active', true);
+    .eq('is_active', true)
+    .not('email', 'like', '%@example.com');
 
   if (committeeError) {
     return { success: false, message: `Error fetching committee: ${committeeError.message}` };
@@ -161,12 +162,13 @@ export async function assignNewMemberForCommunication(
     return { success: false, message: 'Member already has a communication assignment.' };
   }
 
-  // Get same-gender committee members with their assignment counts
+  // Get same-gender committee members with their assignment counts (excluding example/admin accounts)
   const { data: committeeMembersData, error: committeeError } = await supabase
     .from('committee_members')
     .select('*')
     .eq('is_active', true)
-    .eq('gender', member.gender);
+    .eq('gender', member.gender)
+    .not('email', 'like', '%@example.com');
 
   if (committeeError) {
     return { success: false, message: `Error fetching committee: ${committeeError.message}` };

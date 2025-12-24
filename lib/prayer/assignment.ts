@@ -68,11 +68,12 @@ export async function generateInitialPrayerAssignments(
     return { success: false, message: 'No active members found to assign.' };
   }
 
-  // Get active committee members
+  // Get active committee members (excluding example/admin accounts)
   const { data: committeeMembersData, error: committeeError } = await supabase
     .from('committee_members')
     .select('*')
-    .eq('is_active', true);
+    .eq('is_active', true)
+    .not('email', 'like', '%@example.com');
 
   if (committeeError) {
     return { success: false, message: `Error fetching committee: ${committeeError.message}` };
@@ -177,7 +178,7 @@ export async function assignNewMemberForPrayer(
     return { success: false, message: 'Member already has a prayer assignment for this period.' };
   }
 
-  // Get same-gender committee members with their assignment counts
+  // Get same-gender committee members with their assignment counts (excluding example/admin accounts)
   const { data: committeeMembers, error: committeeError } = await supabase
     .from('committee_members')
     .select(`
@@ -186,7 +187,8 @@ export async function assignNewMemberForPrayer(
     `)
     .eq('is_active', true)
     .eq('gender', member.gender)
-    .eq('prayer_assignments.period_start', periodStartStr);
+    .eq('prayer_assignments.period_start', periodStartStr)
+    .not('email', 'like', '%@example.com');
 
   if (committeeError) {
     return { success: false, message: `Error fetching committee: ${committeeError.message}` };
@@ -199,7 +201,8 @@ export async function assignNewMemberForPrayer(
       .from('committee_members')
       .select('*')
       .eq('is_active', true)
-      .eq('gender', member.gender);
+      .eq('gender', member.gender)
+      .not('email', 'like', '%@example.com');
     targetCommittee = allCommittee?.map(c => ({ ...c, prayer_assignments: [] })) || [];
   }
 

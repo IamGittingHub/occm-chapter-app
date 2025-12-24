@@ -2,9 +2,12 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 
 export async function GET(request: Request) {
-  const { searchParams, origin } = new URL(request.url);
+  const { searchParams } = new URL(request.url);
   const code = searchParams.get('code');
   const next = searchParams.get('next') ?? '/dashboard';
+
+  // Use the configured app URL for redirects (handles proxy correctly)
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://occm.srv1165028.hstgr.cloud';
 
   if (code) {
     const supabase = await createClient();
@@ -14,13 +17,15 @@ export async function GET(request: Request) {
       const user = sessionData.user;
 
       // Check if this user's email matches a pending committee member invitation
-      // (committee member exists with this email but no user_id linked yet)
+      // Use case-insensitive matching with ilike
       if (user.email) {
+        const userEmail = user.email.toLowerCase().trim();
+
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: pendingMember } = await (supabase as any)
           .from('committee_members')
           .select('id, user_id, is_active')
-          .eq('email', user.email)
+          .ilike('email', userEmail)
           .is('user_id', null)
           .maybeSingle();
 
@@ -58,10 +63,10 @@ export async function GET(request: Request) {
           .eq('id', existingMember.id);
       }
 
-      return NextResponse.redirect(`${origin}${next}`);
+      return NextResponse.redirect(`${appUrl}${next}`);
     }
   }
 
   // Return the user to an error page with some instructions
-  return NextResponse.redirect(`${origin}/login?error=auth`);
+  return NextResponse.redirect(`${appUrl}/login?error=auth`);
 }
