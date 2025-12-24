@@ -1,6 +1,18 @@
 import { NextResponse } from 'next/server';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 
+interface PendingMember {
+  id: string;
+  user_id: string | null;
+  is_active: boolean;
+  email: string;
+}
+
+interface ExistingMember {
+  id: string;
+  is_active: boolean;
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const code = searchParams.get('code');
@@ -34,12 +46,15 @@ export async function GET(request: Request) {
 
         try {
           // Find committee member with matching email (case-insensitive)
-          const { data: pendingMember, error: findError } = await adminClient
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: pendingMemberData, error: findError } = await (adminClient as any)
             .from('committee_members')
             .select('id, user_id, is_active, email')
             .ilike('email', userEmail)
             .is('user_id', null)
             .maybeSingle();
+
+          const pendingMember = pendingMemberData as PendingMember | null;
 
           if (findError) {
             console.error('Auth callback - Error finding pending member:', findError.message);
@@ -52,7 +67,8 @@ export async function GET(request: Request) {
             });
 
             // Link the user to the committee member and activate them
-            const { error: updateError } = await adminClient
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { error: updateError } = await (adminClient as any)
               .from('committee_members')
               .update({
                 user_id: user.id,
@@ -70,18 +86,22 @@ export async function GET(request: Request) {
             console.log('Auth callback - No pending member found for email:', userEmail);
 
             // Check if already linked (user might be logging in again)
-            const { data: existingMember } = await adminClient
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: existingMemberData } = await (adminClient as any)
               .from('committee_members')
               .select('id, is_active')
               .eq('user_id', user.id)
               .maybeSingle();
+
+            const existingMember = existingMemberData as ExistingMember | null;
 
             if (existingMember) {
               console.log('Auth callback - User already linked to member:', existingMember.id);
 
               // Ensure they're active
               if (!existingMember.is_active) {
-                await adminClient
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                await (adminClient as any)
                   .from('committee_members')
                   .update({
                     is_active: true,
