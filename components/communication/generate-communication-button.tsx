@@ -1,9 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
-import { generateInitialCommunicationAssignments } from '@/lib/communication/assignment';
+import { useMutation } from 'convex/react';
+import { api } from '@/convex/_generated/api';
 import { Button } from '@/components/ui/button';
 import {
   AlertDialog,
@@ -20,26 +19,25 @@ import { useToast } from '@/lib/hooks/use-toast';
 import { MessageSquare, Loader2 } from 'lucide-react';
 
 export function GenerateCommunicationButton() {
-  const router = useRouter();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
 
+  const generateInitial = useMutation(api.communicationAssignments.generateInitial);
+
   async function handleGenerate() {
     setIsLoading(true);
-    const supabase = createClient();
 
-    const result = await generateInitialCommunicationAssignments(supabase);
+    try {
+      const result = await generateInitial({});
 
-    if (result.success) {
       toast({
         title: 'Assignments Generated',
-        description: result.message,
+        description: `Created ${result.count} communication assignments.`,
       });
-      router.refresh();
-    } else {
+    } catch (error) {
       toast({
         title: 'Error',
-        description: result.message,
+        description: error instanceof Error ? error.message : 'Failed to generate assignments',
         variant: 'destructive',
       });
     }

@@ -10,6 +10,7 @@ import {
   MessageSquare,
   Users,
   UserCog,
+  UserPlus,
   Settings,
 } from 'lucide-react';
 
@@ -17,6 +18,7 @@ const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Prayer List', href: '/prayer', icon: Heart },
   { name: 'Communication', href: '/communication', icon: MessageSquare },
+  { name: 'Claim Members', href: '/claim-members', icon: UserPlus },
   { name: 'Members', href: '/members', icon: Users },
   { name: 'Committee', href: '/committee', icon: UserCog },
   { name: 'Settings', href: '/settings', icon: Settings },

@@ -1,9 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useMutation } from 'convex/react';
+import { api } from '@/convex/_generated/api';
 import { committeeInviteSchema, CommitteeInviteFormValues } from '@/lib/validators/committee';
 import { genderOptions } from '@/lib/validators/member';
 import { Button } from '@/components/ui/button';
@@ -35,10 +36,11 @@ import { useToast } from '@/lib/hooks/use-toast';
 import { UserPlus, Loader2, Mail } from 'lucide-react';
 
 export function InviteCommitteeDialog() {
-  const router = useRouter();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+
+  const inviteMember = useMutation(api.committeeMembers.invite);
 
   const form = useForm<CommitteeInviteFormValues>({
     resolver: zodResolver(committeeInviteSchema),
@@ -55,49 +57,30 @@ export function InviteCommitteeDialog() {
     setIsLoading(true);
 
     try {
-      const response = await fetch('/api/invite', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          email: data.email,
-          first_name: data.first_name,
-          last_name: data.last_name,
-          gender: data.gender,
-          phone: data.phone || null,
-        }),
+      const result = await inviteMember({
+        email: data.email,
+        firstName: data.first_name,
+        lastName: data.last_name,
+        gender: data.gender,
+        phone: data.phone || undefined,
       });
 
-      const result = await response.json();
-
-      if (!response.ok) {
-        toast({
-          title: 'Error sending invite',
-          description: result.error || 'Failed to send invitation',
-          variant: 'destructive',
-        });
-        setIsLoading(false);
-        return;
-      }
-
       toast({
-        title: result.emailSent ? 'Invite sent' : 'Committee member added',
+        title: 'Committee member added',
         description: result.message,
       });
 
       setOpen(false);
       form.reset();
-      setIsLoading(false);
-      router.refresh();
     } catch (error) {
       toast({
-        title: 'Error',
+        title: 'Error sending invite',
         description: error instanceof Error ? error.message : 'Failed to send invitation',
         variant: 'destructive',
       });
-      setIsLoading(false);
     }
+
+    setIsLoading(false);
   }
 
   return (
@@ -110,10 +93,10 @@ export function InviteCommitteeDialog() {
       </DialogTrigger>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Invite Committee Member</DialogTitle>
+          <DialogTitle>Add Committee Member</DialogTitle>
           <DialogDescription>
-            Send an invitation to a new committee member. They can sign in with Google or use
-            the magic link sent to their email.
+            Add a new committee member. They can sign in with Google using their email address
+            to access the app.
           </DialogDescription>
         </DialogHeader>
 
@@ -210,7 +193,7 @@ export function InviteCommitteeDialog() {
               </Button>
               <Button type="submit" disabled={isLoading}>
                 {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Send Invite
+                Add Member
               </Button>
             </div>
           </form>

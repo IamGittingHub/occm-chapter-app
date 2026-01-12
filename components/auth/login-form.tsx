@@ -1,25 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { useForm } from 'react-hook-form';
-import * as z from 'zod';
-import { createClient } from '@/lib/supabase/client';
+import { useAuthActions } from '@convex-dev/auth/react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Separator } from '@/components/ui/separator';
-import { Loader2, Mail, Lock } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 
 function GoogleIcon({ className }: { className?: string }) {
   return (
@@ -44,120 +29,21 @@ function GoogleIcon({ className }: { className?: string }) {
   );
 }
 
-const loginSchema = z.object({
-  email: z.string().email('Please enter a valid email'),
-  password: z.string().min(6, 'Password must be at least 6 characters'),
-});
-
-const magicLinkSchema = z.object({
-  email: z.string().email('Please enter a valid email'),
-});
-
-type LoginFormValues = z.infer<typeof loginSchema>;
-type MagicLinkFormValues = z.infer<typeof magicLinkSchema>;
-
 export function LoginForm() {
-  const router = useRouter();
+  const { signIn } = useAuthActions();
   const [isLoading, setIsLoading] = useState(false);
-  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [magicLinkSent, setMagicLinkSent] = useState(false);
 
   async function handleGoogleSignIn() {
-    setIsGoogleLoading(true);
-    setError(null);
-
-    const supabase = createClient();
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
-      },
-    });
-
-    if (error) {
-      setError(error.message);
-      setIsGoogleLoading(false);
-    }
-  }
-
-  const loginForm = useForm<LoginFormValues>({
-    resolver: zodResolver(loginSchema),
-    defaultValues: {
-      email: '',
-      password: '',
-    },
-  });
-
-  const magicLinkForm = useForm<MagicLinkFormValues>({
-    resolver: zodResolver(magicLinkSchema),
-    defaultValues: {
-      email: '',
-    },
-  });
-
-  async function onLoginSubmit(data: LoginFormValues) {
     setIsLoading(true);
     setError(null);
 
-    const supabase = createClient();
-    const { error } = await supabase.auth.signInWithPassword({
-      email: data.email,
-      password: data.password,
-    });
-
-    if (error) {
-      setError(error.message);
+    try {
+      await signIn('google');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to sign in');
       setIsLoading(false);
-      return;
     }
-
-    router.push('/dashboard');
-    router.refresh();
-  }
-
-  async function onMagicLinkSubmit(data: MagicLinkFormValues) {
-    setIsLoading(true);
-    setError(null);
-
-    const supabase = createClient();
-    const { error } = await supabase.auth.signInWithOtp({
-      email: data.email,
-      options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
-      },
-    });
-
-    if (error) {
-      setError(error.message);
-      setIsLoading(false);
-      return;
-    }
-
-    setMagicLinkSent(true);
-    setIsLoading(false);
-  }
-
-  if (magicLinkSent) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-center">Check your email</CardTitle>
-          <CardDescription className="text-center">
-            We sent you a magic link to sign in. Click the link in your email to continue.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button
-            variant="outline"
-            className="w-full"
-            onClick={() => setMagicLinkSent(false)}
-          >
-            Back to login
-          </Button>
-        </CardContent>
-      </Card>
-    );
   }
 
   return (
@@ -168,14 +54,17 @@ export function LoginForm() {
           Sign in to manage your chapter&apos;s prayer and communication assignments.
         </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-4">
+        {error && (
+          <p className="text-sm text-destructive">{error}</p>
+        )}
+
         <Button
-          variant="outline"
-          className="w-full mb-4"
+          className="w-full"
           onClick={handleGoogleSignIn}
-          disabled={isGoogleLoading || isLoading}
+          disabled={isLoading}
         >
-          {isGoogleLoading ? (
+          {isLoading ? (
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
           ) : (
             <GoogleIcon className="mr-2 h-4 w-4" />
@@ -183,114 +72,9 @@ export function LoginForm() {
           Continue with Google
         </Button>
 
-        <div className="relative mb-4">
-          <div className="absolute inset-0 flex items-center">
-            <Separator className="w-full" />
-          </div>
-          <div className="relative flex justify-center text-xs uppercase">
-            <span className="bg-card px-2 text-muted-foreground">Or continue with</span>
-          </div>
-        </div>
-
-        <Tabs defaultValue="password" className="w-full">
-          <TabsList className="grid w-full grid-cols-2 mb-4">
-            <TabsTrigger value="password">Password</TabsTrigger>
-            <TabsTrigger value="magic-link">Magic Link</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="password">
-            <Form {...loginForm}>
-              <form onSubmit={loginForm.handleSubmit(onLoginSubmit)} className="space-y-4">
-                <FormField
-                  control={loginForm.control}
-                  name="email"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Email</FormLabel>
-                      <FormControl>
-                        <div className="relative">
-                          <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                          <Input
-                            placeholder="you@example.com"
-                            className="pl-9"
-                            {...field}
-                          />
-                        </div>
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={loginForm.control}
-                  name="password"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Password</FormLabel>
-                      <FormControl>
-                        <div className="relative">
-                          <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                          <Input
-                            type="password"
-                            placeholder="Enter your password"
-                            className="pl-9"
-                            {...field}
-                          />
-                        </div>
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                {error && (
-                  <p className="text-sm text-destructive">{error}</p>
-                )}
-
-                <Button type="submit" className="w-full" disabled={isLoading}>
-                  {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Sign In
-                </Button>
-              </form>
-            </Form>
-          </TabsContent>
-
-          <TabsContent value="magic-link">
-            <Form {...magicLinkForm}>
-              <form onSubmit={magicLinkForm.handleSubmit(onMagicLinkSubmit)} className="space-y-4">
-                <FormField
-                  control={magicLinkForm.control}
-                  name="email"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Email</FormLabel>
-                      <FormControl>
-                        <div className="relative">
-                          <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                          <Input
-                            placeholder="you@example.com"
-                            className="pl-9"
-                            {...field}
-                          />
-                        </div>
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                {error && (
-                  <p className="text-sm text-destructive">{error}</p>
-                )}
-
-                <Button type="submit" className="w-full" disabled={isLoading}>
-                  {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Send Magic Link
-                </Button>
-              </form>
-            </Form>
-          </TabsContent>
-        </Tabs>
+        <p className="text-xs text-muted-foreground text-center">
+          You must be invited by a committee admin to access this app.
+        </p>
       </CardContent>
     </Card>
   );

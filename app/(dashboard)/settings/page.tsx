@@ -1,25 +1,27 @@
-import { createClient } from '@/lib/supabase/server';
+'use client';
+
+import { useQuery } from 'convex/react';
+import { api } from '@/convex/_generated/api';
 import { SettingsForm } from '@/components/settings/settings-form';
 import { ManualActions } from '@/components/settings/manual-actions';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Settings } from 'lucide-react';
-import { AppSetting } from '@/types/database';
+import { Settings, Loader2 } from 'lucide-react';
 
-export default async function SettingsPage() {
-  const supabase = await createClient();
+export default function SettingsPage() {
+  const settings = useQuery(api.appSettings.getAll);
 
-  // Get current settings
-  const { data } = await supabase
-    .from('app_settings')
-    .select('*');
-
-  const settings = data as AppSetting[] | null;
-  const settingsMap = new Map(settings?.map((s) => [s.setting_key, s.setting_value]) || []);
+  if (settings === undefined) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="h-8 w-8 animate-spin text-deep-blue" />
+      </div>
+    );
+  }
 
   const currentSettings = {
-    unresponsive_threshold_days: settingsMap.get('unresponsive_threshold_days') || '30',
-    rotation_day_of_month: settingsMap.get('rotation_day_of_month') || '1',
-    current_rotation_month: settingsMap.get('current_rotation_month') || '',
+    unresponsive_threshold_days: settings.unresponsive_threshold_days || '30',
+    rotation_day_of_month: settings.rotation_day_of_month || '1',
+    current_rotation_month: settings.current_rotation_month || '',
   };
 
   return (

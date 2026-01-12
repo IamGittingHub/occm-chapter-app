@@ -7,7 +7,7 @@ export type Json =
   | Json[];
 
 export type Gender = 'male' | 'female';
-export type Grade = 'freshman' | 'sophomore' | 'junior' | 'senior' | 'grad';
+export type Grade = 'freshman' | 'sophomore' | 'junior' | 'senior' | 'grad' | 'unknown';
 export type ContactMethod = 'text' | 'call' | 'email' | 'in_person' | 'other';
 export type CommunicationStatus = 'pending' | 'successful' | 'transferred';
 
@@ -141,6 +141,8 @@ export interface Database {
           bucket_number: number;
           period_start: string;
           period_end: string;
+          is_claimed: boolean;
+          claimed_at: string | null;
           created_at: string;
         };
         Insert: {
@@ -150,6 +152,8 @@ export interface Database {
           bucket_number: number;
           period_start: string;
           period_end: string;
+          is_claimed?: boolean;
+          claimed_at?: string | null;
           created_at?: string;
         };
         Update: {
@@ -159,6 +163,8 @@ export interface Database {
           bucket_number?: number;
           period_start?: string;
           period_end?: string;
+          is_claimed?: boolean;
+          claimed_at?: string | null;
           created_at?: string;
         };
         Relationships: [
@@ -187,6 +193,8 @@ export interface Database {
           status: CommunicationStatus;
           last_contact_attempt: string | null;
           is_current: boolean;
+          is_claimed: boolean;
+          claimed_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -198,6 +206,8 @@ export interface Database {
           status?: CommunicationStatus;
           last_contact_attempt?: string | null;
           is_current?: boolean;
+          is_claimed?: boolean;
+          claimed_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -209,6 +219,8 @@ export interface Database {
           status?: CommunicationStatus;
           last_contact_attempt?: string | null;
           is_current?: boolean;
+          is_claimed?: boolean;
+          claimed_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };

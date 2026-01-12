@@ -1,35 +1,39 @@
-import { createClient } from '@/lib/supabase/server';
-import { getCurrentCommitteeMember } from '@/lib/supabase/get-current-committee-member';
+'use client';
+
+import { useQuery } from 'convex/react';
+import { api } from '@/convex/_generated/api';
 import { InviteCommitteeDialog } from '@/components/committee/invite-dialog';
 import { CommitteeMemberCard } from '@/components/committee/committee-member-card';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { UserCog, Users } from 'lucide-react';
-import { CommitteeMember } from '@/types/database';
+import { UserCog, Users, Loader2 } from 'lucide-react';
 
-export default async function CommitteePage() {
-  const supabase = await createClient();
-  const currentUser = await getCurrentCommitteeMember(supabase);
+export default function CommitteePage() {
+  const committeeMembers = useQuery(api.committeeMembers.list);
+  const currentUser = useQuery(api.committeeMembers.getCurrentMember);
+  const stats = useQuery(api.committeeMembers.getStats);
 
-  const { data, error } = await supabase
-    .from('committee_members')
-    .select('*')
-    .order('is_active', { ascending: false })
-    .order('last_name', { ascending: true });
-
-  const committeeMembers = data as CommitteeMember[] | null;
-
-  if (error) {
+  if (committeeMembers === undefined || currentUser === undefined || stats === undefined) {
     return (
-      <div className="text-center py-10">
-        <p className="text-destructive">Error loading committee members: {error.message}</p>
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="h-8 w-8 animate-spin text-deep-blue" />
       </div>
     );
   }
 
-  const totalCount = committeeMembers?.length || 0;
-  const activeCount = committeeMembers?.filter((m) => m.is_active).length || 0;
-  const pendingCount = committeeMembers?.filter((m) => !m.is_active && !m.user_id).length || 0;
-  const inactiveCount = committeeMembers?.filter((m) => !m.is_active && m.user_id).length || 0;
+  // Convert to expected format for components
+  const formattedMembers = committeeMembers.map(m => ({
+    id: m._id as string,
+    user_id: (m.userId as string) || null,
+    email: m.email,
+    first_name: m.firstName,
+    last_name: m.lastName,
+    gender: m.gender,
+    phone: m.phone || null,
+    is_active: m.isActive,
+    created_at: new Date(m.createdAt).toISOString(),
+    updated_at: new Date(m.updatedAt).toISOString(),
+    _id: m._id,
+  }));
 
   return (
     <div className="space-y-6">
@@ -56,7 +60,7 @@ export default async function CommitteePage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold">{totalCount}</p>
+            <p className="text-2xl font-bold">{stats.total}</p>
           </CardContent>
         </Card>
         <Card>
@@ -66,7 +70,7 @@ export default async function CommitteePage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold text-green-600">{activeCount}</p>
+            <p className="text-2xl font-bold text-green-600">{stats.active}</p>
           </CardContent>
         </Card>
         <Card>
@@ -76,7 +80,7 @@ export default async function CommitteePage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold text-amber-600">{pendingCount}</p>
+            <p className="text-2xl font-bold text-amber-600">{stats.pendingInvites}</p>
           </CardContent>
         </Card>
         <Card>
@@ -86,16 +90,16 @@ export default async function CommitteePage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold text-muted-foreground">{inactiveCount}</p>
+            <p className="text-2xl font-bold text-muted-foreground">{stats.inactive}</p>
           </CardContent>
         </Card>
       </div>
 
       {/* Committee List */}
-      {committeeMembers && committeeMembers.length > 0 ? (
+      {committeeMembers.length > 0 ? (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {committeeMembers.map((member) => {
-            const isCurrentUser = currentUser?.id === member.id;
+          {formattedMembers.map((member) => {
+            const isCurrentUser = currentUser?._id === member._id;
 
             return (
               <CommitteeMemberCard

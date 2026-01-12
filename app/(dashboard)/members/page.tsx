@@ -1,28 +1,50 @@
-import { createClient } from '@/lib/supabase/server';
+'use client';
+
+import { useQuery } from 'convex/react';
+import { api } from '@/convex/_generated/api';
 import { MemberTable } from '@/components/members/member-table';
 import { AddMemberDialog } from '@/components/members/add-member-dialog';
 import { CSVImport } from '@/components/members/csv-import';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Users } from 'lucide-react';
-import { Member } from '@/types/database';
+import { Users, Loader2 } from 'lucide-react';
 
-export default async function MembersPage() {
-  const supabase = await createClient();
+export default function MembersPage() {
+  const members = useQuery(api.members.list);
 
-  const { data, error } = await supabase
-    .from('members')
-    .select('*')
-    .order('last_name', { ascending: true });
-
-  const members = data as Member[] | null;
-
-  if (error) {
+  if (members === undefined) {
     return (
-      <div className="text-center py-10">
-        <p className="text-destructive">Error loading members: {error.message}</p>
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="h-8 w-8 animate-spin text-deep-blue" />
       </div>
     );
   }
+
+  // Convert Convex data format to match component expectations
+  const formattedMembers = members.map(m => ({
+    id: m._id as string,
+    first_name: m.firstName,
+    last_name: m.lastName,
+    gender: m.gender,
+    grade: m.grade,
+    major: m.major || null,
+    minor: m.minor || null,
+    church: m.church || null,
+    date_of_birth: m.dateOfBirth || null,
+    email: m.email || null,
+    phone: m.phone || null,
+    student_id: m.studentId || null,
+    is_new_member: m.isNewMember || false,
+    expected_graduation: m.expectedGraduation || null,
+    wants_mentor: m.wantsMentor || false,
+    wants_to_mentor: m.wantsToMentor || false,
+    notes: m.notes || null,
+    is_graduated: m.isGraduated,
+    is_active: m.isActive,
+    created_at: new Date(m.createdAt).toISOString(),
+    updated_at: new Date(m.updatedAt).toISOString(),
+    // Keep _id for Convex operations
+    _id: m._id,
+  }));
 
   return (
     <div className="space-y-6">
@@ -52,7 +74,7 @@ export default async function MembersPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold">{members?.length || 0}</p>
+            <p className="text-2xl font-bold">{members.length}</p>
           </CardContent>
         </Card>
         <Card>
@@ -63,7 +85,7 @@ export default async function MembersPage() {
           </CardHeader>
           <CardContent>
             <p className="text-2xl font-bold">
-              {members?.filter((m) => m.is_active && !m.is_graduated).length || 0}
+              {members.filter((m) => m.isActive && !m.isGraduated).length}
             </p>
           </CardContent>
         </Card>
@@ -75,7 +97,7 @@ export default async function MembersPage() {
           </CardHeader>
           <CardContent>
             <p className="text-2xl font-bold text-blue-600">
-              {members?.filter((m) => m.is_new_member).length || 0}
+              {members.filter((m) => m.isNewMember).length}
             </p>
           </CardContent>
         </Card>
@@ -87,7 +109,7 @@ export default async function MembersPage() {
           </CardHeader>
           <CardContent>
             <p className="text-2xl font-bold">
-              {members?.filter((m) => m.is_graduated).length || 0}
+              {members.filter((m) => m.isGraduated).length}
             </p>
           </CardContent>
         </Card>
@@ -99,16 +121,16 @@ export default async function MembersPage() {
           </CardHeader>
           <CardContent>
             <p className="text-2xl font-bold">
-              {members?.filter((m) => m.gender === 'male').length || 0}M /{' '}
-              {members?.filter((m) => m.gender === 'female').length || 0}F
+              {members.filter((m) => m.gender === 'male').length}M /{' '}
+              {members.filter((m) => m.gender === 'female').length}F
             </p>
           </CardContent>
         </Card>
       </div>
 
       {/* Member Table */}
-      {members && members.length > 0 ? (
-        <MemberTable members={members} />
+      {members.length > 0 ? (
+        <MemberTable members={formattedMembers} />
       ) : (
         <Card>
           <CardContent className="py-10 text-center">

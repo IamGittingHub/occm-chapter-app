@@ -6,7 +6,7 @@ export const memberSchema = z.object({
   gender: z.enum(['male', 'female'], {
     required_error: 'Please select a gender',
   }),
-  grade: z.enum(['freshman', 'sophomore', 'junior', 'senior', 'grad'], {
+  grade: z.enum(['freshman', 'sophomore', 'junior', 'senior', 'grad', 'unknown'], {
     required_error: 'Please select a grade',
   }),
   major: z.string().optional(),
@@ -31,6 +31,7 @@ export const gradeOptions = [
   { value: 'junior', label: 'Junior' },
   { value: 'senior', label: 'Senior' },
   { value: 'grad', label: 'Graduate' },
+  { value: 'unknown', label: 'Unknown' },
 ] as const;
 
 export const genderOptions = [

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
+import { useAuthActions } from '@convex-dev/auth/react';
 import { CommitteeMember } from '@/types/database';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -23,6 +23,7 @@ interface HeaderProps {
 
 export function Header({ committeeMember }: HeaderProps) {
   const router = useRouter();
+  const { signOut } = useAuthActions();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const initials = committeeMember
@@ -30,10 +31,8 @@ export function Header({ committeeMember }: HeaderProps) {
     : 'U';
 
   async function handleSignOut() {
-    const supabase = createClient();
-    await supabase.auth.signOut();
+    await signOut();
     router.push('/login');
-    router.refresh();
   }
 
   return (

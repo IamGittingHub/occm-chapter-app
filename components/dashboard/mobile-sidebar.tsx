@@ -5,26 +5,26 @@ import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from '@/components/ui/dialog';
+  Sheet,
+  SheetContent,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import {
   LayoutDashboard,
   Heart,
   MessageSquare,
   Users,
   UserCog,
+  UserPlus,
   Settings,
-  X,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Prayer List', href: '/prayer', icon: Heart },
   { name: 'Communication', href: '/communication', icon: MessageSquare },
+  { name: 'Claim Members', href: '/claim-members', icon: UserPlus },
   { name: 'Members', href: '/members', icon: Users },
   { name: 'Committee', href: '/committee', icon: UserCog },
   { name: 'Settings', href: '/settings', icon: Settings },
@@ -39,14 +39,18 @@ export function MobileSidebar({ open, onClose }: MobileSidebarProps) {
   const pathname = usePathname();
 
   return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="fixed inset-y-0 left-0 z-50 w-full max-w-xs overflow-y-auto bg-deep-blue p-0 sm:max-w-sm">
+    <Sheet open={open} onOpenChange={onClose}>
+      <SheetContent
+        side="left"
+        className="w-[280px] p-0 bg-deep-blue border-r-0"
+        closeButtonClassName="text-white hover:text-gold"
+      >
         <VisuallyHidden>
-          <DialogTitle>Navigation Menu</DialogTitle>
+          <SheetTitle>Navigation Menu</SheetTitle>
         </VisuallyHidden>
         <div className="flex h-full flex-col">
           {/* Header */}
-          <div className="flex items-center justify-between h-16 px-4 border-b border-deep-blue-400">
+          <div className="flex items-center h-16 px-4 border-b border-deep-blue-400">
             <div className="flex items-center gap-3">
               <Image
                 src="/occm-logo.png"
@@ -60,14 +64,6 @@ export function MobileSidebar({ open, onClose }: MobileSidebarProps) {
                 <p className="text-deep-blue-200 text-xs">Chapter Management</p>
               </div>
             </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="text-white hover:bg-deep-blue-600"
-              onClick={onClose}
-            >
-              <X className="h-6 w-6" />
-            </Button>
           </div>
 
           {/* Navigation */}
@@ -80,7 +76,7 @@ export function MobileSidebar({ open, onClose }: MobileSidebarProps) {
                   href={item.href}
                   onClick={onClose}
                   className={cn(
-                    'group flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors',
+                    'group flex items-center px-3 py-3 text-base font-medium rounded-md transition-colors',
                     isActive
                       ? 'bg-deep-blue-600 text-white'
                       : 'text-deep-blue-100 hover:bg-deep-blue-600 hover:text-white'
@@ -98,7 +94,7 @@ export function MobileSidebar({ open, onClose }: MobileSidebarProps) {
             })}
           </nav>
         </div>
-      </DialogContent>
-    </Dialog>
+      </SheetContent>
+    </Sheet>
   );
 }

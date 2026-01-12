@@ -1,10 +1,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { useMutation } from 'convex/react';
+import { api } from '@/convex/_generated/api';
+import { Id } from '@/convex/_generated/dataModel';
 import { CommitteeMember, Gender } from '@/types/database';
 import { genderOptions } from '@/lib/validators/member';
 import { Button } from '@/components/ui/button';
@@ -44,7 +46,7 @@ const editMemberSchema = z.object({
 type EditMemberFormValues = z.infer<typeof editMemberSchema>;
 
 interface EditCommitteeMemberDialogProps {
-  member: CommitteeMember;
+  member: CommitteeMember & { _id?: Id<"committeeMembers"> };
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -54,9 +56,13 @@ export function EditCommitteeMemberDialog({
   open,
   onOpenChange,
 }: EditCommitteeMemberDialogProps) {
-  const router = useRouter();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
+
+  const updateMember = useMutation(api.committeeMembers.update);
+
+  // Get the Convex ID - either from _id or from id field
+  const convexId = member._id || member.id as Id<"committeeMembers">;
 
   const form = useForm<EditMemberFormValues>({
     resolver: zodResolver(editMemberSchema),
@@ -84,27 +90,13 @@ export function EditCommitteeMemberDialog({
     setIsLoading(true);
 
     try {
-      const response = await fetch(`/api/committee/${member.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          first_name: data.first_name,
-          last_name: data.last_name,
-          gender: data.gender,
-          phone: data.phone || null,
-        }),
+      await updateMember({
+        id: convexId,
+        firstName: data.first_name,
+        lastName: data.last_name,
+        gender: data.gender,
+        phone: data.phone || undefined,
       });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        toast({
-          title: 'Error',
-          description: result.error || 'Failed to update member',
-          variant: 'destructive',
-        });
-        return;
-      }
 
       toast({
         title: 'Success',
@@ -112,11 +104,10 @@ export function EditCommitteeMemberDialog({
       });
 
       onOpenChange(false);
-      router.refresh();
-    } catch {
+    } catch (error) {
       toast({
         title: 'Error',
-        description: 'Failed to update member',
+        description: error instanceof Error ? error.message : 'Failed to update member',
         variant: 'destructive',
       });
     } finally {

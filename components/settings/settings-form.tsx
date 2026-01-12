@@ -1,11 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { createClient } from '@/lib/supabase/client';
+import { useMutation } from 'convex/react';
+import { api } from '@/convex/_generated/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -42,9 +42,10 @@ const settingsSchema = z.object({
 type SettingsFormValues = z.infer<typeof settingsSchema>;
 
 export function SettingsForm({ settings }: SettingsFormProps) {
-  const router = useRouter();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
+
+  const setSetting = useMutation(api.appSettings.set);
 
   const form = useForm<SettingsFormValues>({
     resolver: zodResolver(settingsSchema),
@@ -56,45 +57,32 @@ export function SettingsForm({ settings }: SettingsFormProps) {
 
   async function onSubmit(data: SettingsFormValues) {
     setIsLoading(true);
-    const supabase = createClient();
 
-    // Update settings
-    const updates = [
-      {
-        setting_key: 'unresponsive_threshold_days',
-        setting_value: data.unresponsive_threshold_days,
-        updated_at: new Date().toISOString(),
-      },
-      {
-        setting_key: 'rotation_day_of_month',
-        setting_value: data.rotation_day_of_month,
-        updated_at: new Date().toISOString(),
-      },
-    ];
-
-    for (const update of updates) {
-      const { error } = await supabase.from('app_settings').upsert(update as never, {
-        onConflict: 'setting_key',
+    try {
+      // Update settings
+      await setSetting({
+        key: 'unresponsive_threshold_days',
+        value: data.unresponsive_threshold_days,
       });
 
-      if (error) {
-        toast({
-          title: 'Error saving settings',
-          description: error.message,
-          variant: 'destructive',
-        });
-        setIsLoading(false);
-        return;
-      }
+      await setSetting({
+        key: 'rotation_day_of_month',
+        value: data.rotation_day_of_month,
+      });
+
+      toast({
+        title: 'Settings saved',
+        description: 'Your settings have been updated.',
+      });
+    } catch (error) {
+      toast({
+        title: 'Error saving settings',
+        description: error instanceof Error ? error.message : 'An unexpected error occurred',
+        variant: 'destructive',
+      });
     }
 
-    toast({
-      title: 'Settings saved',
-      description: 'Your settings have been updated.',
-    });
-
     setIsLoading(false);
-    router.refresh();
   }
 
   return (

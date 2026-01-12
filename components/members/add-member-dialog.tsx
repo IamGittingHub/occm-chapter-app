@@ -1,10 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
+import { useMutation } from 'convex/react';
+import { api } from '@/convex/_generated/api';
 import { MemberFormValues } from '@/lib/validators/member';
-import { MemberInsert } from '@/types/database';
 import { MemberForm } from './member-form';
 import { Button } from '@/components/ui/button';
 import {
@@ -23,52 +22,47 @@ interface AddMemberDialogProps {
 }
 
 export function AddMemberDialog({ onSuccess }: AddMemberDialogProps) {
-  const router = useRouter();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
+  const createMember = useMutation(api.members.create);
+
   async function handleSubmit(data: MemberFormValues) {
     setIsLoading(true);
-    const supabase = createClient();
 
-    const insertData: MemberInsert = {
-      first_name: data.first_name,
-      last_name: data.last_name,
-      gender: data.gender,
-      grade: data.grade,
-      major: data.major || null,
-      church: data.church || null,
-      date_of_birth: data.date_of_birth || null,
-      email: data.email || null,
-      phone: data.phone || null,
-    };
+    try {
+      await createMember({
+        firstName: data.first_name,
+        lastName: data.last_name,
+        gender: data.gender,
+        grade: data.grade,
+        major: data.major || undefined,
+        church: data.church || undefined,
+        dateOfBirth: data.date_of_birth || undefined,
+        email: data.email || undefined,
+        phone: data.phone || undefined,
+      });
 
-    const { error } = await supabase.from('members').insert(insertData as never);
+      toast({
+        title: 'Member added',
+        description: `${data.first_name} ${data.last_name} has been added to the chapter.`,
+      });
 
-    if (error) {
+      setOpen(false);
+
+      if (onSuccess) {
+        onSuccess();
+      }
+    } catch (error) {
       toast({
         title: 'Error adding member',
-        description: error.message,
+        description: error instanceof Error ? error.message : 'An unexpected error occurred',
         variant: 'destructive',
       });
-      setIsLoading(false);
-      return;
     }
 
-    toast({
-      title: 'Member added',
-      description: `${data.first_name} ${data.last_name} has been added to the chapter.`,
-    });
-
-    setOpen(false);
     setIsLoading(false);
-
-    if (onSuccess) {
-      onSuccess();
-    }
-
-    router.refresh();
   }
 
   return (

@@ -1,12 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { createClient } from '@/lib/supabase/client';
-import { CommunicationAssignment, Member, CommunicationLog, ContactMethod, CommunicationLogInsert, CommunicationAssignmentUpdate } from '@/types/database';
+import { useMutation } from 'convex/react';
+import { api } from '@/convex/_generated/api';
+import { Id } from '@/convex/_generated/dataModel';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -38,8 +38,24 @@ import { useToast } from '@/lib/hooks/use-toast';
 import { Loader2, Phone, Mail, MessageSquare, User, MoreHorizontal, CheckCircle } from 'lucide-react';
 import { format } from 'date-fns';
 
-interface CommunicationAssignmentWithDetails extends CommunicationAssignment {
-  member: Member;
+interface Member {
+  id: string;
+  first_name: string;
+  last_name: string;
+  gender: string;
+  grade?: string | null;
+}
+
+interface CommunicationLog {
+  id: string;
+  contact_date: string;
+  contact_method?: string | null;
+  was_successful: boolean;
+}
+
+interface CommunicationAssignmentWithDetails {
+  id: string;
+  member: Member | null;
   communication_logs: CommunicationLog[];
 }
 
@@ -66,9 +82,10 @@ const contactMethodOptions = [
 ] as const;
 
 export function ContactLogModal({ assignment, open, onClose }: ContactLogModalProps) {
-  const router = useRouter();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
+
+  const createLog = useMutation(api.communicationLogs.create);
 
   const member = assignment.member;
   const initials = member ? `${member.first_name[0]}${member.last_name[0]}` : 'U';
@@ -84,101 +101,33 @@ export function ContactLogModal({ assignment, open, onClose }: ContactLogModalPr
 
   async function onSubmit(data: ContactLogFormValues) {
     setIsLoading(true);
-    const supabase = createClient();
 
-    // Get current user's committee member ID
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      toast({
-        title: 'Error',
-        description: 'You must be logged in to log a contact.',
-        variant: 'destructive',
+    try {
+      await createLog({
+        assignmentId: assignment.id as Id<"communicationAssignments">,
+        contactMethod: data.contact_method,
+        notes: data.notes,
+        wasSuccessful: data.was_successful,
       });
-      setIsLoading(false);
-      return;
-    }
 
-    const { data: cmData } = await supabase
-      .from('committee_members')
-      .select('id')
-      .eq('user_id', user.id)
-      .single();
-
-    const committeeMember = cmData as { id: string } | null;
-
-    if (!committeeMember) {
       toast({
-        title: 'Error',
-        description: 'Committee member not found.',
-        variant: 'destructive',
+        title: data.was_successful ? 'Success!' : 'Contact logged',
+        description: data.was_successful
+          ? `You've successfully connected with ${member?.first_name}!`
+          : `Contact attempt with ${member?.first_name} has been recorded.`,
       });
-      setIsLoading(false);
-      return;
-    }
 
-    // Create the contact log
-    const logData: CommunicationLogInsert = {
-      assignment_id: assignment.id,
-      committee_member_id: committeeMember.id as string,
-      contact_method: data.contact_method as ContactMethod,
-      notes: data.notes || null,
-      was_successful: data.was_successful,
-    };
-
-    const { error: logError } = await supabase.from('communication_logs').insert(logData as never);
-
-    if (logError) {
+      form.reset();
+      onClose();
+    } catch (error) {
       toast({
         title: 'Error logging contact',
-        description: logError.message,
+        description: error instanceof Error ? error.message : 'An unexpected error occurred',
         variant: 'destructive',
       });
-      setIsLoading(false);
-      return;
     }
 
-    // Update assignment status if successful
-    if (data.was_successful) {
-      const updateData: CommunicationAssignmentUpdate = {
-        status: 'successful',
-        last_contact_attempt: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-      const { error: updateError } = await supabase
-        .from('communication_assignments')
-        .update(updateData as never)
-        .eq('id', assignment.id);
-
-      if (updateError) {
-        toast({
-          title: 'Warning',
-          description: 'Contact logged but failed to update assignment status.',
-          variant: 'destructive',
-        });
-      }
-    } else {
-      // Just update last contact attempt
-      const updateData: CommunicationAssignmentUpdate = {
-        last_contact_attempt: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-      await supabase
-        .from('communication_assignments')
-        .update(updateData as never)
-        .eq('id', assignment.id);
-    }
-
-    toast({
-      title: data.was_successful ? 'Success!' : 'Contact logged',
-      description: data.was_successful
-        ? `You've successfully connected with ${member?.first_name}!`
-        : `Contact attempt with ${member?.first_name} has been recorded.`,
-    });
-
-    form.reset();
     setIsLoading(false);
-    onClose();
-    router.refresh();
   }
 
   return (

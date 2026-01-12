@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useCallback, useRef, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
-import { MemberInsert, Gender, Grade, Member } from '@/types/database';
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
+import { useQuery, useMutation } from 'convex/react';
+import { api } from '@/convex/_generated/api';
+import { Id } from '@/convex/_generated/dataModel';
+import { Gender, Grade } from '@/types/database';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -14,21 +15,41 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+  Sheet,
+  SheetContent,
+} from '@/components/ui/sheet';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/lib/hooks/use-toast';
 import { Upload, FileSpreadsheet, Loader2, AlertCircle, CheckCircle2, RefreshCw, UserPlus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { GenderSwipeUI, MemberNeedingGender } from './gender-swipe-ui';
 
 interface CSVImportProps {
   onSuccess?: () => void;
+}
+
+interface ConvexMember {
+  _id: Id<"members">;
+  firstName: string;
+  lastName: string;
+  gender: Gender;
+  grade: Grade;
+  email?: string;
+  phone?: string;
+  church?: string;
+  major?: string;
+  minor?: string;
+  studentId?: string;
+  dateOfBirth?: string;
+  expectedGraduation?: string;
+  isNewMember?: boolean;
+  wantsMentor?: boolean;
+  wantsToMentor?: boolean;
+  notes?: string;
+  isActive: boolean;
+  isGraduated: boolean;
 }
 
 // Common Coptic/Orthodox name patterns for gender inference
@@ -120,6 +141,8 @@ function mapGradeValue(value: string): Grade | null {
   if (grade.includes('junior') || grade === 'jr') return 'junior';
   if (grade.includes('senior') || grade === 'sr') return 'senior';
   if (grade.includes('grad') || grade.includes('graduate')) return 'grad';
+  // Handle N/A, unknown, and empty values
+  if (grade === 'n/a' || grade === 'na' || grade === 'unknown' || grade === '' || grade === '-') return 'unknown';
   return null;
 }
 
@@ -164,9 +187,25 @@ function parseYesNo(value: string): boolean {
   return lower === 'yes' || lower === 'y' || lower === 'true' || lower === '1';
 }
 
-interface ParsedMember extends MemberInsert {
+interface ParsedMember {
+  first_name: string;
+  last_name: string;
+  gender: Gender;
+  grade: Grade;
+  major?: string;
+  minor?: string;
+  church?: string;
+  email?: string;
+  phone?: string;
+  student_id?: string;
+  date_of_birth?: string;
+  expected_graduation?: string;
+  is_new_member?: boolean;
+  wants_mentor?: boolean;
+  wants_to_mentor?: boolean;
+  notes?: string;
   _needsGender?: boolean;
-  _existingId?: string;
+  _existingId?: Id<"members">;
   _isUpdate?: boolean;
   _changes?: string[];
 }
@@ -174,7 +213,6 @@ interface ParsedMember extends MemberInsert {
 type ImportMode = 'add' | 'sync';
 
 export function CSVImport({ onSuccess }: CSVImportProps) {
-  const router = useRouter();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
@@ -184,22 +222,34 @@ export function CSVImport({ onSuccess }: CSVImportProps) {
   const [errors, setErrors] = useState<string[]>([]);
   const [fileName, setFileName] = useState<string>('');
   const [importMode, setImportMode] = useState<ImportMode>('sync');
-  const [existingMembers, setExistingMembers] = useState<Member[]>([]);
   const [advanceGrades, setAdvanceGrades] = useState(false);
+  const [showSwipeUI, setShowSwipeUI] = useState(false);
 
-  // Load existing members when dialog opens
-  useEffect(() => {
-    if (open) {
-      const loadMembers = async () => {
-        const supabase = createClient();
-        const { data } = await supabase.from('members').select('*');
-        setExistingMembers((data as Member[]) || []);
+  // Use Convex query for existing members
+  const existingMembersData = useQuery(api.members.list);
+  const existingMembers: ConvexMember[] = existingMembersData || [];
+
+  // Convex mutations
+  const bulkCreateMembers = useMutation(api.members.bulkCreate);
+  const updateMember = useMutation(api.members.update);
+
+  // Create data structure for swipe UI
+  const membersNeedingGenderData: MemberNeedingGender[] = useMemo(() => {
+    return needsGender.map(ng => {
+      const member = preview[ng.index];
+      return {
+        index: ng.index,
+        firstName: member?.first_name || ng.name.split(' ')[0] || '',
+        lastName: member?.last_name || ng.name.split(' ').slice(1).join(' ') || '',
+        phone: member?.phone,
+        email: member?.email,
+        grade: member?.grade,
+        gender: ng.gender,
       };
-      loadMembers();
-    }
-  }, [open]);
+    });
+  }, [needsGender, preview]);
 
-  const parseGoogleFormsCSV = useCallback((csv: string, existingMembers: Member[], mode: ImportMode): {
+  const parseGoogleFormsCSV = useCallback((csv: string, existingMembers: ConvexMember[], mode: ImportMode): {
     members: ParsedMember[];
     errors: string[];
     needsGender: { index: number; name: string; gender: Gender | null }[];
@@ -214,7 +264,7 @@ export function CSVImport({ onSuccess }: CSVImportProps) {
     let updateCount = 0;
 
     // Create lookup map by email
-    const existingByEmail = new Map<string, Member>();
+    const existingByEmail = new Map<string, ConvexMember>();
     existingMembers.forEach(m => {
       if (m.email) existingByEmail.set(m.email.toLowerCase(), m);
     });
@@ -343,15 +393,15 @@ export function CSVImport({ onSuccess }: CSVImportProps) {
         church: church || existing?.church || undefined,
         email: email && email.includes('@') ? email : existing?.email || undefined,
         phone: phone || existing?.phone || undefined,
-        student_id: studentId || existing?.student_id || undefined,
-        date_of_birth: dateOfBirth || existing?.date_of_birth || undefined,
-        expected_graduation: expectedGraduation || existing?.expected_graduation || undefined,
-        is_new_member: isNew ?? existing?.is_new_member,
-        wants_mentor: wantsMentor ?? existing?.wants_mentor,
-        wants_to_mentor: wantsToMentor ?? existing?.wants_to_mentor,
+        student_id: studentId || existing?.studentId || undefined,
+        date_of_birth: dateOfBirth || existing?.dateOfBirth || undefined,
+        expected_graduation: expectedGraduation || existing?.expectedGraduation || undefined,
+        is_new_member: isNew ?? existing?.isNewMember,
+        wants_mentor: wantsMentor ?? existing?.wantsMentor,
+        wants_to_mentor: wantsToMentor ?? existing?.wantsToMentor,
         notes: notes && notes.length > 0 ? notes : existing?.notes || undefined,
         _needsGender: !gender && !existing?.gender,
-        _existingId: existing?.id,
+        _existingId: existing?._id,
         _isUpdate: !!existing,
       };
 
@@ -445,19 +495,50 @@ export function CSVImport({ onSuccess }: CSVImportProps) {
     }
 
     setIsLoading(true);
-    const supabase = createClient();
 
-    const newMembers: MemberInsert[] = [];
-    const updates: { id: string; data: Partial<MemberInsert> }[] = [];
+    interface NewMemberData {
+      firstName: string;
+      lastName: string;
+      gender: Gender;
+      grade: Grade;
+      major?: string;
+      minor?: string;
+      church?: string;
+      email?: string;
+      phone?: string;
+      studentId?: string;
+      dateOfBirth?: string;
+      expectedGraduation?: string;
+      isNewMember?: boolean;
+      wantsMentor?: boolean;
+      wantsToMentor?: boolean;
+      notes?: string;
+    }
+
+    const newMembers: NewMemberData[] = [];
+    const updates: { id: Id<"members">; data: NewMemberData }[] = [];
 
     preview.forEach((member, idx) => {
       const genderAssignment = needsGender.find(n => n.index === idx);
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { _needsGender, _existingId, _isUpdate, _changes, ...memberData } = member;
 
-      const finalData = {
-        ...memberData,
+      const finalData: NewMemberData = {
+        firstName: memberData.first_name,
+        lastName: memberData.last_name,
         gender: genderAssignment?.gender || memberData.gender,
+        grade: memberData.grade,
+        major: memberData.major,
+        minor: memberData.minor,
+        church: memberData.church,
+        email: memberData.email,
+        phone: memberData.phone,
+        studentId: memberData.student_id,
+        dateOfBirth: memberData.date_of_birth,
+        expectedGraduation: memberData.expected_graduation,
+        isNewMember: memberData.is_new_member,
+        wantsMentor: memberData.wants_mentor,
+        wantsToMentor: memberData.wants_to_mentor,
+        notes: memberData.notes,
       };
 
       if (_isUpdate && _existingId) {
@@ -469,84 +550,89 @@ export function CSVImport({ onSuccess }: CSVImportProps) {
 
     let hasError = false;
 
-    // Insert new members
-    if (newMembers.length > 0) {
-      const { error } = await supabase.from('members').insert(newMembers as never);
-      if (error) {
-        toast({
-          title: 'Error adding new members',
-          description: error.message,
-          variant: 'destructive',
+    try {
+      // Insert new members using bulk create
+      if (newMembers.length > 0) {
+        await bulkCreateMembers({ members: newMembers });
+      }
+
+      // Update existing members one by one
+      for (const update of updates) {
+        await updateMember({
+          id: update.id,
+          firstName: update.data.firstName,
+          lastName: update.data.lastName,
+          gender: update.data.gender,
+          grade: update.data.grade,
+          major: update.data.major,
+          minor: update.data.minor,
+          church: update.data.church,
+          email: update.data.email,
+          phone: update.data.phone,
+          studentId: update.data.studentId,
+          dateOfBirth: update.data.dateOfBirth,
+          expectedGraduation: update.data.expectedGraduation,
+          isNewMember: update.data.isNewMember,
+          wantsMentor: update.data.wantsMentor,
+          wantsToMentor: update.data.wantsToMentor,
+          notes: update.data.notes,
         });
-        hasError = true;
       }
-    }
 
-    // Update existing members
-    for (const update of updates) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error } = await (supabase as any)
-        .from('members')
-        .update({ ...update.data, updated_at: new Date().toISOString() })
-        .eq('id', update.id);
+      // Advance grades for members not in CSV if option is checked
+      if (advanceGrades) {
+        const gradeOrder: Grade[] = ['freshman', 'sophomore', 'junior', 'senior', 'grad'];
+        const csvEmails = new Set(preview.filter(m => m.email).map(m => m.email!.toLowerCase()));
 
-      if (error) {
-        hasError = true;
-        console.error('Update error:', error);
-      }
-    }
+        // Find active members not in the CSV who should advance
+        const toAdvance = existingMembers.filter(m =>
+          m.email &&
+          !csvEmails.has(m.email.toLowerCase()) &&
+          m.isActive &&
+          !m.isGraduated &&
+          m.grade !== 'grad'
+        );
 
-    // Advance grades for members not in CSV if option is checked
-    if (advanceGrades && !hasError) {
-      const gradeOrder: Grade[] = ['freshman', 'sophomore', 'junior', 'senior', 'grad'];
-      const csvEmails = new Set(preview.filter(m => m.email).map(m => m.email!.toLowerCase()));
-
-      // Find active members not in the CSV who should advance
-      const toAdvance = existingMembers.filter(m =>
-        m.email &&
-        !csvEmails.has(m.email.toLowerCase()) &&
-        m.is_active &&
-        !m.is_graduated &&
-        m.grade !== 'grad'
-      );
-
-      for (const member of toAdvance) {
-        const currentIndex = gradeOrder.indexOf(member.grade);
-        if (currentIndex < gradeOrder.length - 1) {
-          const newGrade = gradeOrder[currentIndex + 1];
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await (supabase as any)
-            .from('members')
-            .update({ grade: newGrade, updated_at: new Date().toISOString() })
-            .eq('id', member.id);
+        for (const member of toAdvance) {
+          const currentIndex = gradeOrder.indexOf(member.grade);
+          if (currentIndex < gradeOrder.length - 1) {
+            const newGrade = gradeOrder[currentIndex + 1];
+            await updateMember({ id: member._id, grade: newGrade });
+          }
         }
       }
-    }
 
-    if (!hasError) {
       toast({
         title: 'Import successful',
         description: `Added ${newMembers.length} new members, updated ${updates.length} existing members.`,
       });
+    } catch (error) {
+      hasError = true;
+      toast({
+        title: 'Error during import',
+        description: error instanceof Error ? error.message : 'An unexpected error occurred',
+        variant: 'destructive',
+      });
     }
 
-    setOpen(false);
-    setFileName('');
-    setPreview([]);
-    setErrors([]);
-    setNeedsGender([]);
+    if (!hasError) {
+      setOpen(false);
+      setFileName('');
+      setPreview([]);
+      setErrors([]);
+      setNeedsGender([]);
+      setAdvanceGrades(false);
+
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+
+      if (onSuccess) {
+        onSuccess();
+      }
+    }
+
     setIsLoading(false);
-    setAdvanceGrades(false);
-
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-
-    if (onSuccess) {
-      onSuccess();
-    }
-
-    router.refresh();
   };
 
   const newCount = preview.filter(m => !m._isUpdate).length;
@@ -644,33 +730,67 @@ export function CSVImport({ onSuccess }: CSVImportProps) {
           {/* Gender Assignment */}
           {needsGender.length > 0 && (
             <div className="p-4 bg-amber-500/10 rounded-lg">
-              <div className="flex items-center gap-2 mb-3">
-                <AlertCircle className="h-4 w-4 text-amber-600" />
-                <p className="font-medium text-amber-600">
-                  Assign gender for {needsGender.filter(n => !n.gender).length} member(s)
-                </p>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 text-amber-600" />
+                  <p className="font-medium text-amber-600">
+                    {needsGender.filter(n => !n.gender).length} member(s) need gender assigned
+                  </p>
+                </div>
+                <Badge variant="outline">
+                  {needsGender.filter(n => n.gender).length} / {needsGender.length} done
+                </Badge>
               </div>
-              <div className="grid gap-2 max-h-48 overflow-y-auto">
-                {needsGender.map((item) => (
-                  <div key={item.index} className="flex items-center justify-between gap-4 p-2 bg-background rounded">
-                    <span className="text-sm font-medium">{item.name}</span>
-                    <Select
-                      value={item.gender || ''}
-                      onValueChange={(value) => updateGender(item.index, value as Gender)}
+
+              {/* Preview of members needing gender */}
+              <div className="mb-4 max-h-24 overflow-y-auto">
+                <div className="flex flex-wrap gap-2">
+                  {needsGender.slice(0, 10).map((item) => (
+                    <Badge
+                      key={item.index}
+                      variant={item.gender ? "default" : "outline"}
+                      className={
+                        item.gender === 'male' ? "bg-blue-500 hover:bg-blue-600" :
+                        item.gender === 'female' ? "bg-pink-500 hover:bg-pink-600" :
+                        ""
+                      }
                     >
-                      <SelectTrigger className="w-32">
-                        <SelectValue placeholder="Select" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="male">Male</SelectItem>
-                        <SelectItem value="female">Female</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ))}
+                      {item.name}
+                      {item.gender && ` (${item.gender[0].toUpperCase()})`}
+                    </Badge>
+                  ))}
+                  {needsGender.length > 10 && (
+                    <Badge variant="outline" className="text-xs">
+                      +{needsGender.length - 10} more
+                    </Badge>
+                  )}
+                </div>
               </div>
+
+              <Button
+                onClick={() => setShowSwipeUI(true)}
+                className="w-full"
+                variant={needsGender.some(n => !n.gender) ? "default" : "secondary"}
+              >
+                {needsGender.some(n => !n.gender)
+                  ? `Assign Gender (${needsGender.filter(n => !n.gender).length} remaining)`
+                  : 'Review Gender Assignments'
+                }
+              </Button>
             </div>
           )}
+
+          {/* Swipe UI Sheet */}
+          <Sheet open={showSwipeUI} onOpenChange={setShowSwipeUI}>
+            <SheetContent side="bottom" className="h-[90vh] p-0">
+              <GenderSwipeUI
+                members={membersNeedingGenderData}
+                onGenderAssigned={(index, gender) => updateGender(index, gender)}
+                onComplete={() => setShowSwipeUI(false)}
+                onCancel={() => setShowSwipeUI(false)}
+              />
+            </SheetContent>
+          </Sheet>
 
           {/* Preview */}
           {preview.length > 0 && (

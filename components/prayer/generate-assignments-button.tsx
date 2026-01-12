@@ -1,9 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
-import { generateInitialPrayerAssignments } from '@/lib/prayer/assignment';
+import { useMutation } from 'convex/react';
+import { api } from '@/convex/_generated/api';
 import { Button } from '@/components/ui/button';
 import {
   AlertDialog,
@@ -20,26 +19,25 @@ import { useToast } from '@/lib/hooks/use-toast';
 import { Shuffle, Loader2 } from 'lucide-react';
 
 export function GenerateAssignmentsButton() {
-  const router = useRouter();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
 
+  const generateInitial = useMutation(api.prayerAssignments.generateInitial);
+
   async function handleGenerate() {
     setIsLoading(true);
-    const supabase = createClient();
 
-    const result = await generateInitialPrayerAssignments(supabase);
+    try {
+      const result = await generateInitial({});
 
-    if (result.success) {
       toast({
         title: 'Assignments Generated',
-        description: result.message,
+        description: `Created ${result.count} prayer assignments.`,
       });
-      router.refresh();
-    } else {
+    } catch (error) {
       toast({
         title: 'Error',
-        description: result.message,
+        description: error instanceof Error ? error.message : 'Failed to generate assignments',
         variant: 'destructive',
       });
     }

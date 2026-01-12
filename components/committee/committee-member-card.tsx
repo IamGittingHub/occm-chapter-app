@@ -1,7 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useMutation } from 'convex/react';
+import { api } from '@/convex/_generated/api';
+import { Id } from '@/convex/_generated/dataModel';
 import { CommitteeMember } from '@/types/database';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -29,7 +31,6 @@ import {
   Mail,
   Phone,
   MoreVertical,
-  Send,
   Trash2,
   Pencil,
   UserCheck,
@@ -39,86 +40,40 @@ import {
 import { EditCommitteeMemberDialog } from './edit-member-dialog';
 
 interface CommitteeMemberCardProps {
-  member: CommitteeMember;
+  member: CommitteeMember & { _id?: Id<"committeeMembers"> };
   isCurrentUser: boolean;
 }
 
 export function CommitteeMemberCard({ member, isCurrentUser }: CommitteeMemberCardProps) {
-  const router = useRouter();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
 
+  const updateMember = useMutation(api.committeeMembers.update);
+  const removeMember = useMutation(api.committeeMembers.remove);
+
   const initials = `${member.first_name[0]}${member.last_name[0]}`;
-  const isPending = !member.is_active && !member.user_id;
-  const isInactive = !member.is_active && member.user_id;
 
-  const handleResendInvite = async () => {
-    setIsLoading(true);
-    try {
-      const response = await fetch(`/api/committee/${member.id}/resend-invite`, {
-        method: 'POST',
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        toast({
-          title: 'Error',
-          description: result.error || 'Failed to resend invite',
-          variant: 'destructive',
-        });
-        return;
-      }
-
-      toast({
-        title: 'Success',
-        description: result.message,
-      });
-
-      router.refresh();
-    } catch {
-      toast({
-        title: 'Error',
-        description: 'Failed to resend invite',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  // Get the Convex ID - either from _id or from id field
+  const convexId = member._id || member.id as Id<"committeeMembers">;
 
   const handleToggleActive = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch(`/api/committee/${member.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ is_active: !member.is_active }),
+      await updateMember({
+        id: convexId,
+        isActive: !member.is_active,
       });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        toast({
-          title: 'Error',
-          description: result.error || 'Failed to update member',
-          variant: 'destructive',
-        });
-        return;
-      }
 
       toast({
         title: 'Success',
         description: `${member.first_name} is now ${member.is_active ? 'inactive' : 'active'}`,
       });
-
-      router.refresh();
-    } catch {
+    } catch (error) {
       toast({
         title: 'Error',
-        description: 'Failed to update member',
+        description: error instanceof Error ? error.message : 'Failed to update member',
         variant: 'destructive',
       });
     } finally {
@@ -129,31 +84,18 @@ export function CommitteeMemberCard({ member, isCurrentUser }: CommitteeMemberCa
   const handleDelete = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch(`/api/committee/${member.id}`, {
-        method: 'DELETE',
+      await removeMember({
+        id: convexId,
       });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        toast({
-          title: 'Error',
-          description: result.error || 'Failed to delete member',
-          variant: 'destructive',
-        });
-        return;
-      }
 
       toast({
         title: 'Success',
         description: `${member.first_name} ${member.last_name} has been removed`,
       });
-
-      router.refresh();
-    } catch {
+    } catch (error) {
       toast({
         title: 'Error',
-        description: 'Failed to delete member',
+        description: error instanceof Error ? error.message : 'Failed to delete member',
         variant: 'destructive',
       });
     } finally {
@@ -197,13 +139,6 @@ export function CommitteeMemberCard({ member, isCurrentUser }: CommitteeMemberCa
                       <Pencil className="mr-2 h-4 w-4" />
                       Edit
                     </DropdownMenuItem>
-
-                    {isPending && (
-                      <DropdownMenuItem onClick={handleResendInvite}>
-                        <Send className="mr-2 h-4 w-4" />
-                        Resend Invite
-                      </DropdownMenuItem>
-                    )}
 
                     {!isCurrentUser && member.user_id && (
                       <DropdownMenuItem onClick={handleToggleActive}>
