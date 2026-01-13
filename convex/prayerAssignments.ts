@@ -524,6 +524,275 @@ export const resetAll = mutation({
 });
 
 /**
+ * DRY RUN: Preview what initial prayer assignments would look like without creating them.
+ * This is used for testing/sandbox mode.
+ */
+export const generateInitialDryRun = query({
+  args: { targetDate: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    await requireCommitteeMember(ctx);
+
+    const targetDateObj = args.targetDate ? new Date(args.targetDate) : new Date();
+    const { periodStart, periodEnd } = getPeriodDates(targetDateObj);
+
+    // Check if assignments already exist
+    const existing = await ctx.db
+      .query("prayerAssignments")
+      .withIndex("by_periodStart", (q) => q.eq("periodStart", periodStart))
+      .first();
+
+    if (existing) {
+      return {
+        wouldSucceed: false,
+        reason: `Assignments already exist for ${periodStart}`,
+        assignments: [],
+      };
+    }
+
+    // Get active, non-graduated members
+    const members = await ctx.db
+      .query("members")
+      .withIndex("by_isActive_isGraduated", (q) =>
+        q.eq("isActive", true).eq("isGraduated", false)
+      )
+      .collect();
+
+    // Get active committee members (excluding example accounts)
+    const allCommittee = await ctx.db
+      .query("committeeMembers")
+      .withIndex("by_isActive", (q) => q.eq("isActive", true))
+      .collect();
+    const committeeMembers = allCommittee.filter((c) => !isExampleEmail(c.email));
+
+    if (members.length === 0) {
+      return {
+        wouldSucceed: false,
+        reason: "No active members to assign",
+        assignments: [],
+      };
+    }
+    if (committeeMembers.length === 0) {
+      return {
+        wouldSucceed: false,
+        reason: "No active committee members to assign to",
+        assignments: [],
+      };
+    }
+
+    // Separate by gender (use deterministic sort for preview consistency)
+    const maleMembers = members
+      .filter((m) => m.gender === "male")
+      .sort((a, b) => a.lastName.localeCompare(b.lastName));
+    const femaleMembers = members
+      .filter((m) => m.gender === "female")
+      .sort((a, b) => a.lastName.localeCompare(b.lastName));
+    const maleCommittee = committeeMembers
+      .filter((c) => c.gender === "male")
+      .sort((a, b) => a.lastName.localeCompare(b.lastName));
+    const femaleCommittee = committeeMembers
+      .filter((c) => c.gender === "female")
+      .sort((a, b) => a.lastName.localeCompare(b.lastName));
+
+    const previewAssignments: Array<{
+      memberName: string;
+      memberGender: string;
+      committeeMemberName: string;
+      bucketNumber: number;
+    }> = [];
+
+    // Preview male assignments
+    if (maleCommittee.length > 0) {
+      maleMembers.forEach((member, index) => {
+        const bucketNumber = (index % maleCommittee.length) + 1;
+        const committeeMember = maleCommittee[index % maleCommittee.length];
+        previewAssignments.push({
+          memberName: `${member.firstName} ${member.lastName}`,
+          memberGender: "male",
+          committeeMemberName: `${committeeMember.firstName} ${committeeMember.lastName}`,
+          bucketNumber,
+        });
+      });
+    }
+
+    // Preview female assignments
+    if (femaleCommittee.length > 0) {
+      femaleMembers.forEach((member, index) => {
+        const bucketNumber = (index % femaleCommittee.length) + 1;
+        const committeeMember = femaleCommittee[index % femaleCommittee.length];
+        previewAssignments.push({
+          memberName: `${member.firstName} ${member.lastName}`,
+          memberGender: "female",
+          committeeMemberName: `${committeeMember.firstName} ${committeeMember.lastName}`,
+          bucketNumber,
+        });
+      });
+    }
+
+    return {
+      wouldSucceed: true,
+      reason: null,
+      periodStart,
+      periodEnd,
+      summary: {
+        totalMembers: members.length,
+        maleMembers: maleMembers.length,
+        femaleMembers: femaleMembers.length,
+        maleCommittee: maleCommittee.length,
+        femaleCommittee: femaleCommittee.length,
+      },
+      assignments: previewAssignments,
+    };
+  },
+});
+
+/**
+ * DRY RUN: Preview what bucket rotation would look like without making changes.
+ * This is used for testing/sandbox mode.
+ */
+export const rotateBucketsDryRun = query({
+  args: { targetDate: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    await requireCommitteeMember(ctx);
+
+    const targetDateObj = args.targetDate ? new Date(args.targetDate) : new Date();
+    const { periodStart: newPeriodStart, periodEnd: newPeriodEnd } =
+      getPeriodDates(targetDateObj);
+
+    // Get previous month
+    const prevMonth = new Date(targetDateObj);
+    prevMonth.setMonth(prevMonth.getMonth() - 1);
+    const { periodStart: prevPeriodStart } = getPeriodDates(prevMonth);
+
+    // Check if new period already has assignments
+    const existingNew = await ctx.db
+      .query("prayerAssignments")
+      .withIndex("by_periodStart", (q) => q.eq("periodStart", newPeriodStart))
+      .first();
+
+    if (existingNew) {
+      return {
+        wouldSucceed: false,
+        reason: `Assignments already exist for ${newPeriodStart}`,
+        changes: [],
+      };
+    }
+
+    // Get previous period assignments
+    const prevAssignments = await ctx.db
+      .query("prayerAssignments")
+      .withIndex("by_periodStart", (q) => q.eq("periodStart", prevPeriodStart))
+      .collect();
+
+    if (prevAssignments.length === 0) {
+      return {
+        wouldSucceed: false,
+        reason: `No previous assignments to rotate from ${prevPeriodStart}`,
+        changes: [],
+      };
+    }
+
+    // Get active committee members
+    const allCommittee = await ctx.db
+      .query("committeeMembers")
+      .withIndex("by_isActive", (q) => q.eq("isActive", true))
+      .collect();
+    const activeCommittee = allCommittee.filter((c) => !isExampleEmail(c.email));
+
+    // Separate by gender
+    const maleCommittee = activeCommittee
+      .filter((c) => c.gender === "male")
+      .sort((a, b) => a._id.localeCompare(b._id));
+    const femaleCommittee = activeCommittee
+      .filter((c) => c.gender === "female")
+      .sort((a, b) => a._id.localeCompare(b._id));
+
+    const previewChanges: Array<{
+      memberName: string;
+      fromCommitteeMember: string;
+      toCommitteeMember: string;
+      fromBucket: number;
+      toBucket: number;
+      isClaimed: boolean;
+      action: string;
+    }> = [];
+
+    for (const prevAssignment of prevAssignments) {
+      const member = await ctx.db.get(prevAssignment.memberId);
+      if (!member || !member.isActive || member.isGraduated) {
+        continue;
+      }
+
+      const prevCommittee = await ctx.db.get(prevAssignment.committeeMemberId);
+      const prevCommitteeName = prevCommittee
+        ? `${prevCommittee.firstName} ${prevCommittee.lastName}`
+        : "Unknown";
+
+      const sameGenderCommittee =
+        member.gender === "male" ? maleCommittee : femaleCommittee;
+
+      if (sameGenderCommittee.length === 0) {
+        continue;
+      }
+
+      let newBucketNumber: number;
+      let newCommitteeMemberId: Id<"committeeMembers">;
+      let action: string;
+
+      if (prevAssignment.isClaimed) {
+        newBucketNumber = prevAssignment.bucketNumber;
+        newCommitteeMemberId = prevAssignment.committeeMemberId;
+        action = "STAYS (claimed)";
+
+        // Check if committee member still active
+        const cm = await ctx.db.get(prevAssignment.committeeMemberId);
+        if (!cm || !cm.isActive) {
+          const maxBucket = sameGenderCommittee.length;
+          newBucketNumber = ((prevAssignment.bucketNumber - 1 + 1) % maxBucket) + 1;
+          newCommitteeMemberId = sameGenderCommittee[newBucketNumber - 1]._id;
+          action = "REASSIGNED (claimed but committee member inactive)";
+        }
+      } else {
+        const maxBucket = sameGenderCommittee.length;
+        newBucketNumber = ((prevAssignment.bucketNumber - 1 + 1) % maxBucket) + 1;
+        newCommitteeMemberId = sameGenderCommittee[newBucketNumber - 1]._id;
+        action = "ROTATES";
+      }
+
+      const newCommittee = await ctx.db.get(newCommitteeMemberId);
+      const newCommitteeName = newCommittee
+        ? `${newCommittee.firstName} ${newCommittee.lastName}`
+        : "Unknown";
+
+      previewChanges.push({
+        memberName: `${member.firstName} ${member.lastName}`,
+        fromCommitteeMember: prevCommitteeName,
+        toCommitteeMember: newCommitteeName,
+        fromBucket: prevAssignment.bucketNumber,
+        toBucket: newBucketNumber,
+        isClaimed: prevAssignment.isClaimed,
+        action,
+      });
+    }
+
+    const rotatingCount = previewChanges.filter((c) => c.action === "ROTATES").length;
+    const stayingCount = previewChanges.filter((c) => c.action.includes("STAYS")).length;
+
+    return {
+      wouldSucceed: true,
+      reason: null,
+      fromPeriod: prevPeriodStart,
+      toPeriod: newPeriodStart,
+      summary: {
+        totalAssignments: previewChanges.length,
+        rotating: rotatingCount,
+        staying: stayingCount,
+      },
+      changes: previewChanges,
+    };
+  },
+});
+
+/**
  * Get stats for prayer assignments.
  */
 export const getStats = query({

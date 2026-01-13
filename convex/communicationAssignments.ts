@@ -755,6 +755,280 @@ export const releaseClaim = mutation({
 });
 
 /**
+ * DRY RUN: Preview what initial communication assignments would look like without creating them.
+ * This is used for testing/sandbox mode.
+ */
+export const generateInitialDryRun = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireCommitteeMember(ctx);
+
+    // Check if current assignments already exist
+    const existing = await ctx.db
+      .query("communicationAssignments")
+      .withIndex("by_isCurrent", (q) => q.eq("isCurrent", true))
+      .first();
+
+    if (existing) {
+      return {
+        wouldSucceed: false,
+        reason: "Communication assignments already exist",
+        assignments: [],
+      };
+    }
+
+    // Get active, non-graduated members
+    const members = await ctx.db
+      .query("members")
+      .withIndex("by_isActive_isGraduated", (q) =>
+        q.eq("isActive", true).eq("isGraduated", false)
+      )
+      .collect();
+
+    // Get active committee members (excluding example accounts)
+    const allCommittee = await ctx.db
+      .query("committeeMembers")
+      .withIndex("by_isActive", (q) => q.eq("isActive", true))
+      .collect();
+    const committeeMembers = allCommittee.filter((c) => !isExampleEmail(c.email));
+
+    if (members.length === 0) {
+      return {
+        wouldSucceed: false,
+        reason: "No active members to assign",
+        assignments: [],
+      };
+    }
+    if (committeeMembers.length === 0) {
+      return {
+        wouldSucceed: false,
+        reason: "No active committee members to assign to",
+        assignments: [],
+      };
+    }
+
+    // Separate by gender (use deterministic sort for preview consistency)
+    const maleMembers = members
+      .filter((m) => m.gender === "male")
+      .sort((a, b) => a.lastName.localeCompare(b.lastName));
+    const femaleMembers = members
+      .filter((m) => m.gender === "female")
+      .sort((a, b) => a.lastName.localeCompare(b.lastName));
+    const maleCommittee = committeeMembers
+      .filter((c) => c.gender === "male")
+      .sort((a, b) => a.lastName.localeCompare(b.lastName));
+    const femaleCommittee = committeeMembers
+      .filter((c) => c.gender === "female")
+      .sort((a, b) => a.lastName.localeCompare(b.lastName));
+
+    const previewAssignments: Array<{
+      memberName: string;
+      memberGender: string;
+      committeeMemberName: string;
+    }> = [];
+
+    // Preview male assignments
+    if (maleCommittee.length > 0) {
+      maleMembers.forEach((member, index) => {
+        const committeeMember = maleCommittee[index % maleCommittee.length];
+        previewAssignments.push({
+          memberName: `${member.firstName} ${member.lastName}`,
+          memberGender: "male",
+          committeeMemberName: `${committeeMember.firstName} ${committeeMember.lastName}`,
+        });
+      });
+    }
+
+    // Preview female assignments
+    if (femaleCommittee.length > 0) {
+      femaleMembers.forEach((member, index) => {
+        const committeeMember = femaleCommittee[index % femaleCommittee.length];
+        previewAssignments.push({
+          memberName: `${member.firstName} ${member.lastName}`,
+          memberGender: "female",
+          committeeMemberName: `${committeeMember.firstName} ${committeeMember.lastName}`,
+        });
+      });
+    }
+
+    return {
+      wouldSucceed: true,
+      reason: null,
+      summary: {
+        totalMembers: members.length,
+        maleMembers: maleMembers.length,
+        femaleMembers: femaleMembers.length,
+        maleCommittee: maleCommittee.length,
+        femaleCommittee: femaleCommittee.length,
+      },
+      assignments: previewAssignments,
+    };
+  },
+});
+
+/**
+ * DRY RUN: Preview what auto-transfers would happen without making changes.
+ * This is used for testing/sandbox mode.
+ */
+export const processAutoTransfersDryRun = query({
+  args: { thresholdDays: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    await requireCommitteeMember(ctx);
+
+    // Get threshold from settings or use default
+    let threshold = args.thresholdDays ?? 30;
+
+    const thresholdSetting = await ctx.db
+      .query("appSettings")
+      .withIndex("by_settingKey", (q) =>
+        q.eq("settingKey", "unresponsive_threshold_days")
+      )
+      .first();
+
+    if (thresholdSetting) {
+      threshold = parseInt(thresholdSetting.settingValue, 10) || 30;
+    }
+
+    // Get all pending, current, non-claimed assignments
+    const pendingAssignments = await ctx.db
+      .query("communicationAssignments")
+      .withIndex("by_status_isCurrent", (q) =>
+        q.eq("status", "pending").eq("isCurrent", true)
+      )
+      .collect();
+
+    const eligibleForTransfer = pendingAssignments.filter(
+      (a) => !a.isClaimed && daysSince(a.assignedDate) >= threshold
+    );
+
+    const previewTransfers: Array<{
+      memberName: string;
+      fromCommitteeMember: string;
+      toCommitteeMember: string;
+      daysSinceAssigned: number;
+      action: string;
+    }> = [];
+
+    for (const assignment of eligibleForTransfer) {
+      const member = await ctx.db.get(assignment.memberId);
+      if (!member || !member.isActive || member.isGraduated) {
+        continue;
+      }
+
+      const fromCommittee = await ctx.db.get(assignment.committeeMemberId);
+      const fromName = fromCommittee
+        ? `${fromCommittee.firstName} ${fromCommittee.lastName}`
+        : "Unknown";
+
+      // Get committee members of same gender
+      const allCommittee = await ctx.db
+        .query("committeeMembers")
+        .withIndex("by_gender_isActive", (q) =>
+          q.eq("gender", member.gender).eq("isActive", true)
+        )
+        .collect();
+      const sameGenderCommittee = allCommittee.filter((c) => !isExampleEmail(c.email));
+
+      if (sameGenderCommittee.length <= 1) {
+        previewTransfers.push({
+          memberName: `${member.firstName} ${member.lastName}`,
+          fromCommitteeMember: fromName,
+          toCommitteeMember: "N/A",
+          daysSinceAssigned: daysSince(assignment.assignedDate),
+          action: "SKIPPED (no one else to transfer to)",
+        });
+        continue;
+      }
+
+      // Get transfer history
+      const transferHistory = await ctx.db
+        .query("transferHistory")
+        .withIndex("by_memberId", (q) => q.eq("memberId", assignment.memberId))
+        .collect();
+
+      const triedCommitteeIds = new Set(
+        transferHistory.map((t) => t.fromCommitteeMemberId)
+      );
+      triedCommitteeIds.add(assignment.committeeMemberId);
+
+      // Find next committee member
+      let nextCommitteeMember = sameGenderCommittee.find(
+        (cm) => !triedCommitteeIds.has(cm._id)
+      );
+
+      let action = "TRANSFERS";
+
+      if (!nextCommitteeMember) {
+        // All have tried, find one with fewest attempts
+        const attemptCounts: Record<string, number> = {};
+        for (const cm of sameGenderCommittee) {
+          attemptCounts[cm._id] = 0;
+        }
+        for (const t of transferHistory) {
+          if (attemptCounts[t.fromCommitteeMemberId] !== undefined) {
+            attemptCounts[t.fromCommitteeMemberId]++;
+          }
+        }
+
+        let minAttempts = Infinity;
+        for (const cm of sameGenderCommittee) {
+          if (cm._id !== assignment.committeeMemberId) {
+            if (attemptCounts[cm._id] < minAttempts) {
+              minAttempts = attemptCounts[cm._id];
+              nextCommitteeMember = cm;
+            }
+          }
+        }
+
+        if (nextCommitteeMember) {
+          action = "TRANSFERS (all have tried, picking least attempts)";
+        }
+      }
+
+      if (!nextCommitteeMember) {
+        previewTransfers.push({
+          memberName: `${member.firstName} ${member.lastName}`,
+          fromCommitteeMember: fromName,
+          toCommitteeMember: "N/A",
+          daysSinceAssigned: daysSince(assignment.assignedDate),
+          action: "SKIPPED (could not find committee member)",
+        });
+        continue;
+      }
+
+      const toName = `${nextCommitteeMember.firstName} ${nextCommitteeMember.lastName}`;
+
+      previewTransfers.push({
+        memberName: `${member.firstName} ${member.lastName}`,
+        fromCommitteeMember: fromName,
+        toCommitteeMember: toName,
+        daysSinceAssigned: daysSince(assignment.assignedDate),
+        action,
+      });
+    }
+
+    const transferCount = previewTransfers.filter((t) =>
+      t.action.startsWith("TRANSFERS")
+    ).length;
+    const skippedCount = previewTransfers.filter((t) =>
+      t.action.startsWith("SKIPPED")
+    ).length;
+
+    return {
+      wouldSucceed: true,
+      thresholdDays: threshold,
+      summary: {
+        totalPending: pendingAssignments.length,
+        eligibleForTransfer: eligibleForTransfer.length,
+        wouldTransfer: transferCount,
+        wouldSkip: skippedCount,
+      },
+      transfers: previewTransfers,
+    };
+  },
+});
+
+/**
  * Reset all communication assignments (admin action).
  */
 export const resetAll = mutation({

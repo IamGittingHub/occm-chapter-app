@@ -29,10 +29,41 @@ export default defineSchema({
   // Auth tables from @convex-dev/auth
   ...authTables,
 
+  // Organizations - Multi-chapter support for different OCCM chapters
+  organizations: defineTable({
+    name: v.string(), // "OCCM Georgia Tech"
+    slug: v.string(), // "gatech" - URL-friendly identifier
+    description: v.optional(v.string()),
+    logoUrl: v.optional(v.string()),
+    settings: v.object({
+      rotationDay: v.number(), // Day of month for prayer rotation (1-28)
+      autoTransferDays: v.number(), // Days before auto-transfer (default 30)
+      timezone: v.optional(v.string()), // e.g., "America/New_York"
+    }),
+    isActive: v.boolean(),
+    createdAt: v.number(), // Epoch ms
+    updatedAt: v.number(), // Epoch ms
+  })
+    .index("by_slug", ["slug"])
+    .index("by_isActive", ["isActive"]),
+
+  // Organization Memberships - Users can belong to multiple organizations
+  organizationMemberships: defineTable({
+    userId: v.id("users"),
+    organizationId: v.id("organizations"),
+    role: v.union(v.literal("admin"), v.literal("member")), // admin can manage org settings
+    joinedAt: v.number(), // Epoch ms
+  })
+    .index("by_userId", ["userId"])
+    .index("by_organizationId", ["organizationId"])
+    .index("by_userId_organizationId", ["userId", "organizationId"]),
+
   // Committee Members - Leaders managing prayer/outreach
   committeeMembers: defineTable({
     // Link to auth users table (nullable until invite accepted)
     userId: v.optional(v.id("users")),
+    // Organization this committee member belongs to (optional for backward compat)
+    organizationId: v.optional(v.id("organizations")),
     email: v.string(),
     firstName: v.string(),
     lastName: v.string(),
@@ -48,10 +79,14 @@ export default defineSchema({
     .index("by_email", ["email"])
     .index("by_isActive", ["isActive"])
     .index("by_gender_isActive", ["gender", "isActive"])
-    .index("by_legacyId", ["legacyId"]),
+    .index("by_legacyId", ["legacyId"])
+    .index("by_organizationId", ["organizationId"])
+    .index("by_organizationId_isActive", ["organizationId", "isActive"]),
 
   // Members - Students being prayed for/contacted
   members: defineTable({
+    // Organization this member belongs to (optional for backward compat)
+    organizationId: v.optional(v.id("organizations")),
     firstName: v.string(),
     lastName: v.string(),
     gender: genderValidator,
@@ -81,7 +116,9 @@ export default defineSchema({
     .index("by_isActive_isGraduated", ["isActive", "isGraduated"])
     .index("by_gender_isActive_isGraduated", ["gender", "isActive", "isGraduated"])
     .index("by_lastName", ["lastName"])
-    .index("by_legacyId", ["legacyId"]),
+    .index("by_legacyId", ["legacyId"])
+    .index("by_organizationId", ["organizationId"])
+    .index("by_organizationId_isActive", ["organizationId", "isActive"]),
 
   // Prayer Assignments - Monthly prayer rotation tracking
   prayerAssignments: defineTable({
@@ -168,8 +205,10 @@ export default defineSchema({
     .index("by_toCommitteeMemberId", ["toCommitteeMemberId"])
     .index("by_legacyId", ["legacyId"]),
 
-  // App Settings - Configuration key-value store
+  // App Settings - Configuration key-value store (org-scoped or global)
   appSettings: defineTable({
+    // Organization this setting belongs to (null for global settings)
+    organizationId: v.optional(v.id("organizations")),
     settingKey: v.string(),
     settingValue: v.string(),
     updatedAt: v.number(), // Epoch ms
@@ -177,7 +216,9 @@ export default defineSchema({
     legacyId: v.optional(v.string()),
   })
     .index("by_settingKey", ["settingKey"])
-    .index("by_legacyId", ["legacyId"]),
+    .index("by_legacyId", ["legacyId"])
+    .index("by_organizationId", ["organizationId"])
+    .index("by_organizationId_settingKey", ["organizationId", "settingKey"]),
 });
 
 // Export types for use in functions
