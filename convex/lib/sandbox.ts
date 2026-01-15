@@ -1,4 +1,4 @@
-import { QueryCtx } from "../_generated/server";
+import { QueryCtx, MutationCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { getEffectiveRole } from "./auth";
 
@@ -9,7 +9,7 @@ import { getEffectiveRole } from "./auth";
  * 2. Current user is a developer or overseer (who don't have real assignments)
  */
 export async function isSandboxMode(
-  ctx: QueryCtx,
+  ctx: QueryCtx | MutationCtx,
   committeeMember: Doc<"committeeMembers">
 ): Promise<boolean> {
   // Check if test mode is enabled

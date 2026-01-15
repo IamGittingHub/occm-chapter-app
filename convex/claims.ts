@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
 import { requireCommitteeMember, isExampleEmail } from "./lib/auth";
+import { isSandboxMode } from "./lib/sandbox";
 import { Doc, Id } from "./_generated/dataModel";
 
 // Helper to get period dates for current month
@@ -213,6 +214,12 @@ export const claimMember = mutation({
   handler: async (ctx, args) => {
     const { committeeMember } = await requireCommitteeMember(ctx);
 
+    // Block mutations in sandbox mode - they're viewing mock data
+    const sandboxActive = await isSandboxMode(ctx, committeeMember);
+    if (sandboxActive) {
+      throw new Error("Cannot claim members in sandbox mode. Disable test mode to make changes.");
+    }
+
     const member = await ctx.db.get(args.memberId);
     if (!member) {
       throw new Error("Member not found");
@@ -347,6 +354,12 @@ export const releaseClaim = mutation({
   },
   handler: async (ctx, args) => {
     const { committeeMember } = await requireCommitteeMember(ctx);
+
+    // Block mutations in sandbox mode - they're viewing mock data
+    const sandboxActive = await isSandboxMode(ctx, committeeMember);
+    if (sandboxActive) {
+      throw new Error("Cannot release claims in sandbox mode. Disable test mode to make changes.");
+    }
 
     const forPrayer = args.forPrayer ?? true;
     const forCommunication = args.forCommunication ?? true;

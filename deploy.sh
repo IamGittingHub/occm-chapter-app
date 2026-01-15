@@ -30,8 +30,8 @@ cp -r public deploy-package/
 echo "Syncing to VPS..."
 rsync -avz --delete --exclude='.env' deploy-package/ ${VPS_USER}@${VPS_HOST}:${APP_DIR}/
 
-# Restart PM2 on VPS (port 3002) with env vars from .env file
+# Restart PM2 on VPS (port 3002)
 echo "Restarting app on VPS..."
-ssh ${VPS_USER}@${VPS_HOST} "cd ${APP_DIR} && pm2 delete occm-app 2>/dev/null; set -a && source .env && set +a && PORT=3002 pm2 start server.js --name occm-app --update-env && pm2 save"
+ssh ${VPS_USER}@${VPS_HOST} "cd ${APP_DIR} && pm2 delete occm-app 2>/dev/null || true; PORT=3002 pm2 start server.js --name occm-app --update-env && pm2 save"
 
 echo "=== Deploy Complete ==="

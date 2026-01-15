@@ -23,7 +23,8 @@ export function ConvexDashboardLayout({ children }: ConvexDashboardLayoutProps) 
 
 function DashboardContent({ children }: { children: ReactNode }) {
   const committeeMember = useQuery(api.committeeMembers.getCurrentMember);
-  const sandboxStatus = useQuery(api.dashboard.getSandboxStatus);
+  const roleInfo = useQuery(api.committeeMembers.getMyRole);
+  const testModeSetting = useQuery(api.appSettings.getByKey, { key: "test_mode" });
 
   if (committeeMember === undefined) {
     return (
@@ -44,8 +45,14 @@ function DashboardContent({ children }: { children: ReactNode }) {
     );
   }
 
-  const roleLabel = sandboxStatus?.role === 'developer' ? 'Developer' :
-                    sandboxStatus?.role === 'overseer' ? 'Overseer' : null;
+  // Calculate sandbox status from existing APIs
+  const role = roleInfo?.role;
+  const isDevOrOverseer = role === 'developer' || role === 'overseer';
+  const testModeEnabled = testModeSetting === 'true';
+  const isSandboxActive = testModeEnabled && isDevOrOverseer;
+
+  const roleLabel = role === 'developer' ? 'Developer' :
+                    role === 'overseer' ? 'Overseer' : null;
 
   return (
     <div className="min-h-screen bg-warm-white">
@@ -54,7 +61,7 @@ function DashboardContent({ children }: { children: ReactNode }) {
         <ConvexHeader committeeMember={committeeMember} />
 
         {/* Sandbox Mode Banner */}
-        {sandboxStatus?.isSandboxActive && (
+        {isSandboxActive && (
           <div className="bg-amber-100 border-b border-amber-200 px-4 py-2">
             <div className="flex items-center justify-center gap-2 text-amber-800">
               <FlaskConical className="h-4 w-4" />
@@ -66,12 +73,12 @@ function DashboardContent({ children }: { children: ReactNode }) {
         )}
 
         {/* Role Badge Banner (for developers/overseers not in sandbox) */}
-        {roleLabel && !sandboxStatus?.isSandboxActive && (
+        {roleLabel && !isSandboxActive && (
           <div className="bg-purple-100 border-b border-purple-200 px-4 py-2">
             <div className="flex items-center justify-center gap-2 text-purple-800">
               <ShieldCheck className="h-4 w-4" />
               <span className="text-sm font-medium">
-                {roleLabel} Mode - {sandboxStatus?.role === 'developer' ? 'Full access enabled' : 'Overview access only'}
+                {roleLabel} Mode - {role === 'developer' ? 'Full access enabled' : 'Overview access only'}
               </span>
             </div>
           </div>
