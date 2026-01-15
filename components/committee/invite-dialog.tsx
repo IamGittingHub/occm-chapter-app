@@ -5,8 +5,9 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation } from 'convex/react';
 import { api } from '@/convex/_generated/api';
-import { committeeInviteSchema, CommitteeInviteFormValues } from '@/lib/validators/committee';
+import { committeeInviteSchema, CommitteeInviteFormValues, roleOptions, Role } from '@/lib/validators/committee';
 import { genderOptions } from '@/lib/validators/member';
+import { useQuery } from 'convex/react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -41,6 +42,8 @@ export function InviteCommitteeDialog() {
   const [isLoading, setIsLoading] = useState(false);
 
   const inviteMember = useMutation(api.committeeMembers.invite);
+  const myRole = useQuery(api.committeeMembers.getMyRole);
+  const canAssignRoles = myRole?.role === 'developer';
 
   const form = useForm<CommitteeInviteFormValues>({
     resolver: zodResolver(committeeInviteSchema),
@@ -50,6 +53,7 @@ export function InviteCommitteeDialog() {
       last_name: '',
       gender: undefined,
       phone: '',
+      role: 'committee_member',
     },
   });
 
@@ -63,6 +67,7 @@ export function InviteCommitteeDialog() {
         lastName: data.last_name,
         gender: data.gender,
         phone: data.phone || undefined,
+        role: canAssignRoles ? data.role : undefined,
       });
 
       toast({
@@ -186,6 +191,33 @@ export function InviteCommitteeDialog() {
                 </FormItem>
               )}
             />
+
+            {canAssignRoles && (
+              <FormField
+                control={form.control}
+                name="role"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Role</FormLabel>
+                    <Select onValueChange={field.onChange} defaultValue={field.value || 'committee_member'}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select role" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {roleOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
 
             <div className="flex justify-end gap-2 pt-4">
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>

@@ -33,6 +33,7 @@ export default function CommitteePage() {
     created_at: new Date(m.createdAt).toISOString(),
     updated_at: new Date(m.updatedAt).toISOString(),
     _id: m._id,
+    role: m.role ?? 'committee_member',
   }));
 
   return (

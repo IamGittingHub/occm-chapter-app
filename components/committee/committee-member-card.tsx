@@ -5,6 +5,7 @@ import { useMutation } from 'convex/react';
 import { api } from '@/convex/_generated/api';
 import { Id } from '@/convex/_generated/dataModel';
 import { CommitteeMember } from '@/types/database';
+import { Role } from '@/lib/validators/committee';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -40,9 +41,21 @@ import {
 import { EditCommitteeMemberDialog } from './edit-member-dialog';
 
 interface CommitteeMemberCardProps {
-  member: CommitteeMember & { _id?: Id<"committeeMembers"> };
+  member: CommitteeMember & { _id?: Id<"committeeMembers">; role?: Role };
   isCurrentUser: boolean;
 }
+
+const roleLabels: Record<Role, string> = {
+  developer: 'Developer',
+  overseer: 'Overseer',
+  committee_member: 'Committee Member',
+};
+
+const roleBadgeClasses: Record<Role, string> = {
+  developer: 'bg-purple-100 text-purple-800 hover:bg-purple-100',
+  overseer: 'bg-blue-100 text-blue-800 hover:bg-blue-100',
+  committee_member: '', // Don't show badge for regular members
+};
 
 export function CommitteeMemberCard({ member, isCurrentUser }: CommitteeMemberCardProps) {
   const { toast } = useToast();
@@ -186,13 +199,18 @@ export function CommitteeMemberCard({ member, isCurrentUser }: CommitteeMemberCa
                   </div>
                 )}
               </div>
-              <div className="mt-3">
+              <div className="mt-3 flex flex-wrap gap-2">
                 {member.is_active ? (
                   <Badge className="bg-green-100 text-green-800 hover:bg-green-100">Active</Badge>
                 ) : member.user_id ? (
                   <Badge variant="secondary">Inactive</Badge>
                 ) : (
                   <Badge variant="outline">Pending Invite</Badge>
+                )}
+                {member.role && member.role !== 'committee_member' && (
+                  <Badge className={roleBadgeClasses[member.role as Role]}>
+                    {roleLabels[member.role as Role]}
+                  </Badge>
                 )}
               </div>
             </div>

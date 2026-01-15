@@ -19,6 +19,7 @@ import type * as dashboard from "../dashboard.js";
 import type * as debug from "../debug.js";
 import type * as http from "../http.js";
 import type * as lib_auth from "../lib/auth.js";
+import type * as lib_sandbox from "../lib/sandbox.js";
 import type * as members from "../members.js";
 import type * as migrations from "../migrations.js";
 import type * as prayerAssignments from "../prayerAssignments.js";
@@ -42,6 +43,7 @@ declare const fullApi: ApiFromModules<{
   debug: typeof debug;
   http: typeof http;
   "lib/auth": typeof lib_auth;
+  "lib/sandbox": typeof lib_sandbox;
   members: typeof members;
   migrations: typeof migrations;
   prayerAssignments: typeof prayerAssignments;

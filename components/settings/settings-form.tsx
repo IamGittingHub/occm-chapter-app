@@ -8,6 +8,7 @@ import { useMutation } from 'convex/react';
 import { api } from '@/convex/_generated/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 import {
   Form,
   FormControl,
@@ -18,13 +19,14 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { useToast } from '@/lib/hooks/use-toast';
-import { Loader2 } from 'lucide-react';
+import { Loader2, FlaskConical } from 'lucide-react';
 
 interface SettingsFormProps {
   settings: {
     unresponsive_threshold_days: string;
     rotation_day_of_month: string;
     current_rotation_month: string;
+    test_mode?: string;
   };
 }
 
@@ -37,6 +39,7 @@ const settingsSchema = z.object({
     const num = parseInt(val);
     return !isNaN(num) && num >= 1 && num <= 28;
   }, 'Must be between 1 and 28'),
+  test_mode: z.boolean().optional(),
 });
 
 type SettingsFormValues = z.infer<typeof settingsSchema>;
@@ -52,6 +55,7 @@ export function SettingsForm({ settings }: SettingsFormProps) {
     defaultValues: {
       unresponsive_threshold_days: settings.unresponsive_threshold_days,
       rotation_day_of_month: settings.rotation_day_of_month,
+      test_mode: settings.test_mode === 'true',
     },
   });
 
@@ -68,6 +72,11 @@ export function SettingsForm({ settings }: SettingsFormProps) {
       await setSetting({
         key: 'rotation_day_of_month',
         value: data.rotation_day_of_month,
+      });
+
+      await setSetting({
+        key: 'test_mode',
+        value: data.test_mode ? 'true' : 'false',
       });
 
       toast({
@@ -123,6 +132,33 @@ export function SettingsForm({ settings }: SettingsFormProps) {
             </FormItem>
           )}
         />
+
+        <div className="border-t pt-6">
+          <FormField
+            control={form.control}
+            name="test_mode"
+            render={({ field }) => (
+              <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                <div className="space-y-0.5">
+                  <FormLabel className="text-base flex items-center gap-2">
+                    <FlaskConical className="h-4 w-4 text-purple-600" />
+                    Test Mode (Sandbox)
+                  </FormLabel>
+                  <FormDescription>
+                    When enabled, actions like "Generate Assignments" and "Rotate Prayer List"
+                    will show a preview without making actual changes to the data.
+                  </FormDescription>
+                </div>
+                <FormControl>
+                  <Switch
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                  />
+                </FormControl>
+              </FormItem>
+            )}
+          />
+        </div>
 
         <Button type="submit" disabled={isLoading}>
           {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

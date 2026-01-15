@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useState } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '@/convex/_generated/api';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -8,13 +9,23 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Progress } from '@/components/ui/progress';
-import { Heart, MessageSquare, Users, AlertTriangle, CheckCircle, ArrowRight, Clock, Loader2 } from 'lucide-react';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Heart, MessageSquare, Users, AlertTriangle, CheckCircle, ArrowRight, Clock, Loader2, TrendingUp } from 'lucide-react';
 import { RotationCountdown } from '@/components/dashboard/rotation-countdown';
 
 export default function DashboardPage() {
+  const [viewMode, setViewMode] = useState<'my' | 'team'>('my');
   const stats = useQuery(api.dashboard.getStats);
   const data = useQuery(api.dashboard.getData);
   const currentMember = useQuery(api.committeeMembers.getCurrentMember);
+  const myRole = useQuery(api.committeeMembers.getMyRole);
+
+  // Only fetch team overview for overseers/developers
+  const isOverseerOrAbove = myRole?.role === 'developer' || myRole?.role === 'overseer';
+  const overseerDashboard = useQuery(
+    api.dashboard.getOverseerDashboard,
+    isOverseerOrAbove ? {} : "skip"
+  );
 
   if (stats === undefined || data === undefined) {
     return (
@@ -48,7 +59,9 @@ export default function DashboardPage() {
             Welcome back{currentMember ? `, ${currentMember.firstName}` : ''}!
           </h1>
           <p className="text-muted-foreground">
-            Here&apos;s what needs your attention today.
+            {isOverseerOrAbove && viewMode === 'team'
+              ? 'Team overview and progress.'
+              : "Here's what needs your attention today."}
           </p>
         </div>
         <div className="md:w-80">
@@ -56,6 +69,158 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* View Mode Toggle for Overseers/Developers */}
+      {isOverseerOrAbove && (
+        <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as 'my' | 'team')} className="w-fit">
+          <TabsList>
+            <TabsTrigger value="my">My Dashboard</TabsTrigger>
+            <TabsTrigger value="team">Team Overview</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      )}
+
+      {/* Team Overview (Overseer/Developer only) */}
+      {viewMode === 'team' && isOverseerOrAbove && overseerDashboard && (
+        <>
+          {/* Overall Stats Row */}
+          <div className="grid gap-4 md:grid-cols-4">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Success Rate</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-3xl font-bold text-deep-blue">{overseerDashboard.overallStats.overallSuccessRate}%</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Urgent</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-3xl font-bold text-orange-600">{overseerDashboard.overallStats.totalUrgent}</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Overdue</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-3xl font-bold text-red-600">{overseerDashboard.overallStats.totalOverdue}</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Committee</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-3xl font-bold">{overseerDashboard.overallStats.totalCommitteeMembers}</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Committee Progress */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <TrendingUp className="h-5 w-5 text-deep-blue" />
+                Committee Progress
+              </CardTitle>
+              <CardDescription>
+                Individual progress for each committee member
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {overseerDashboard.committeeProgress.map((cm) => {
+                const hasIssues = cm.communication.urgent > 0 || cm.communication.overdue > 0;
+                const statusColor = cm.communication.overdue > 0 ? 'text-red-600'
+                  : cm.communication.urgent > 0 ? 'text-orange-600' : 'text-green-600';
+
+                return (
+                  <div key={cm.committeeMember._id} className="flex items-center gap-4 p-3 rounded-lg bg-muted/30">
+                    <Avatar className="h-10 w-10">
+                      <AvatarFallback className="bg-soft-blue text-white">
+                        {cm.committeeMember.firstName[0]}{cm.committeeMember.lastName[0]}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <p className="font-medium truncate">
+                          {cm.committeeMember.firstName} {cm.committeeMember.lastName}
+                        </p>
+                        <span className={`text-sm font-semibold ${statusColor}`}>
+                          {cm.communication.successRate}%
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Progress value={cm.communication.successRate} className="h-2 flex-1" />
+                        <span className="text-xs text-muted-foreground whitespace-nowrap">
+                          {cm.communication.successful}/{cm.communication.total}
+                        </span>
+                      </div>
+                      {hasIssues && (
+                        <div className="flex gap-2 mt-2">
+                          {cm.communication.urgent > 0 && (
+                            <Badge variant="outline" className="text-orange-600 border-orange-300 bg-orange-50">
+                              {cm.communication.urgent} urgent
+                            </Badge>
+                          )}
+                          {cm.communication.overdue > 0 && (
+                            <Badge variant="outline" className="text-red-600 border-red-300 bg-red-50">
+                              {cm.communication.overdue} overdue
+                            </Badge>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+              {overseerDashboard.committeeProgress.length === 0 && (
+                <p className="text-center text-muted-foreground py-4">
+                  No committee members with assignments yet.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Uncontacted Members - Needs Attention */}
+          {overseerDashboard.uncontactedMembers.length > 0 && (
+            <Card className="border-orange-200 bg-orange-50">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-lg flex items-center gap-2 text-orange-700">
+                  <AlertTriangle className="h-5 w-5" />
+                  Needs Attention ({overseerDashboard.uncontactedMembers.length})
+                </CardTitle>
+                <CardDescription className="text-orange-600">
+                  Members who haven&apos;t been contacted in 20+ days
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {overseerDashboard.uncontactedMembers.slice(0, 10).map((item, index) => {
+                    const isOverdue = item.daysSinceAssigned >= 30;
+                    return (
+                      <div key={index} className="flex items-center justify-between p-2 bg-white rounded-lg">
+                        <div>
+                          <p className="font-medium">{item.member?.firstName} {item.member?.lastName}</p>
+                          <p className="text-xs text-muted-foreground">Assigned to: {item.assignedTo}</p>
+                        </div>
+                        <Badge variant={isOverdue ? 'destructive' : 'outline'} className={!isOverdue ? 'border-orange-400 text-orange-600' : ''}>
+                          {item.daysSinceAssigned}d
+                        </Badge>
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </>
+      )}
+
+      {/* My Dashboard View */}
+      {viewMode === 'my' && (
+        <>
       {/* Urgent Actions */}
       {urgentContacts.length > 0 && (
         <Card className="border-orange-200 bg-orange-50">
@@ -327,6 +492,8 @@ export default function DashboardPage() {
           </div>
         </CardContent>
       </Card>
+        </>
+      )}
     </div>
   );
 }

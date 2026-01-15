@@ -3,6 +3,7 @@ import { query, mutation, internalMutation } from "./_generated/server";
 import { requireCommitteeMember, isExampleEmail } from "./lib/auth";
 import { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
+import { isSandboxMode, generateMockCommunicationAssignments } from "./lib/sandbox";
 
 // Status validator
 const statusValidator = v.union(
@@ -168,11 +169,25 @@ export const getStats = query({
 
 /**
  * Get assignments for the current user (with member and log details).
+ * In sandbox mode (test mode + developer/overseer), returns mock data.
  */
 export const getMyAssignments = query({
   args: {},
   handler: async (ctx) => {
     const { committeeMember } = await requireCommitteeMember(ctx);
+
+    // Check if sandbox mode is active
+    const sandboxActive = await isSandboxMode(ctx, committeeMember);
+    if (sandboxActive) {
+      // Return mock data for developers/overseers in test mode
+      const mockAssignments = await generateMockCommunicationAssignments(
+        ctx,
+        committeeMember._id
+      );
+      return mockAssignments.sort((a, b) =>
+        (a.member?.lastName || "").localeCompare(b.member?.lastName || "")
+      );
+    }
 
     const assignments = await ctx.db
       .query("communicationAssignments")
@@ -381,6 +396,7 @@ export const assignNewMember = mutation({
 
 /**
  * Mark an assignment as successful.
+ * In sandbox mode with mock IDs, returns success without writing to database.
  */
 export const markSuccessful = mutation({
   args: {
@@ -398,6 +414,13 @@ export const markSuccessful = mutation({
   },
   handler: async (ctx, args) => {
     const { committeeMember } = await requireCommitteeMember(ctx);
+
+    // Check for sandbox mode mock ID
+    const idStr = args.assignmentId as string;
+    if (idStr.startsWith("mock_")) {
+      // Sandbox mode - return success without writing
+      return { success: true, sandbox: true };
+    }
 
     const assignment = await ctx.db.get(args.assignmentId);
     if (!assignment) {
@@ -427,16 +450,26 @@ export const markSuccessful = mutation({
       lastContactAttempt: now,
       updatedAt: now,
     });
+
+    return { success: true, sandbox: false };
   },
 });
 
 /**
  * Transfer an unresponsive member to next available committee member.
+ * In sandbox mode with mock IDs, returns success without writing to database.
  */
 export const transfer = mutation({
   args: { assignmentId: v.id("communicationAssignments") },
   handler: async (ctx, args) => {
     await requireCommitteeMember(ctx);
+
+    // Check for sandbox mode mock ID
+    const idStr = args.assignmentId as string;
+    if (idStr.startsWith("mock_")) {
+      // Sandbox mode - return success without writing
+      return { toCommitteeMemberId: "mock_committee_0" as any, sandbox: true };
+    }
 
     const assignment = await ctx.db.get(args.assignmentId);
     if (!assignment) {
@@ -698,11 +731,19 @@ export const triggerAutoTransfers = mutation({
 
 /**
  * Claim a communication assignment.
+ * In sandbox mode with mock IDs, returns success without writing to database.
  */
 export const claim = mutation({
   args: { assignmentId: v.id("communicationAssignments") },
   handler: async (ctx, args) => {
     const { committeeMember } = await requireCommitteeMember(ctx);
+
+    // Check for sandbox mode mock ID
+    const idStr = args.assignmentId as string;
+    if (idStr.startsWith("mock_")) {
+      // Sandbox mode - return success without writing
+      return { success: true, sandbox: true };
+    }
 
     const assignment = await ctx.db.get(args.assignmentId);
     if (!assignment) {
@@ -722,16 +763,26 @@ export const claim = mutation({
       claimedAt: Date.now(),
       updatedAt: Date.now(),
     });
+
+    return { success: true, sandbox: false };
   },
 });
 
 /**
  * Release a communication assignment claim.
+ * In sandbox mode with mock IDs, returns success without writing to database.
  */
 export const releaseClaim = mutation({
   args: { assignmentId: v.id("communicationAssignments") },
   handler: async (ctx, args) => {
     const { committeeMember } = await requireCommitteeMember(ctx);
+
+    // Check for sandbox mode mock ID
+    const idStr = args.assignmentId as string;
+    if (idStr.startsWith("mock_")) {
+      // Sandbox mode - return success without writing
+      return { success: true, sandbox: true };
+    }
 
     const assignment = await ctx.db.get(args.assignmentId);
     if (!assignment) {
@@ -751,6 +802,8 @@ export const releaseClaim = mutation({
       claimedAt: undefined,
       updatedAt: Date.now(),
     });
+
+    return { success: true, sandbox: false };
   },
 });
 
@@ -1058,6 +1111,112 @@ export const resetAll = mutation({
       deletedLogs: logs.length,
       deletedTransfers: transfers.length,
       deletedAssignments: assignments.length,
+    };
+  },
+});
+
+/**
+ * Reset and regenerate communication assignments.
+ * This deletes existing current assignments and creates new ones with current committee members.
+ * Only regular committee members (not developers/overseers) receive assignments.
+ */
+export const resetAndRegenerate = mutation({
+  args: {},
+  handler: async (ctx) => {
+    await requireCommitteeMember(ctx);
+
+    // Delete existing current assignments
+    const existingAssignments = await ctx.db
+      .query("communicationAssignments")
+      .withIndex("by_isCurrent", (q) => q.eq("isCurrent", true))
+      .collect();
+
+    for (const a of existingAssignments) {
+      await ctx.db.patch(a._id, {
+        isCurrent: false,
+        updatedAt: Date.now(),
+      });
+    }
+
+    // Get active, non-graduated members
+    const members = await ctx.db
+      .query("members")
+      .withIndex("by_isActive_isGraduated", (q) =>
+        q.eq("isActive", true).eq("isGraduated", false)
+      )
+      .collect();
+
+    // Get active committee members who do outreach (exclude developers/overseers)
+    const allCommittee = await ctx.db
+      .query("committeeMembers")
+      .withIndex("by_isActive", (q) => q.eq("isActive", true))
+      .collect();
+
+    // Filter: only committee_member role (not developer or overseer)
+    const committeeMembers = allCommittee.filter((c) => {
+      if (isExampleEmail(c.email)) return false;
+      const role = c.role ?? "committee_member";
+      return role === "committee_member";
+    });
+
+    if (members.length === 0) {
+      throw new Error("No active members to assign");
+    }
+    if (committeeMembers.length === 0) {
+      throw new Error("No active committee members to assign to");
+    }
+
+    // Separate by gender
+    const maleMembers = shuffleArray(members.filter((m) => m.gender === "male"));
+    const femaleMembers = shuffleArray(members.filter((m) => m.gender === "female"));
+    const maleCommittee = committeeMembers.filter((c) => c.gender === "male");
+    const femaleCommittee = committeeMembers.filter((c) => c.gender === "female");
+
+    const now = Date.now();
+    let createdCount = 0;
+
+    // Assign male members to male committee (round-robin)
+    if (maleCommittee.length > 0) {
+      for (let i = 0; i < maleMembers.length; i++) {
+        const committeeMember = maleCommittee[i % maleCommittee.length];
+        await ctx.db.insert("communicationAssignments", {
+          memberId: maleMembers[i]._id,
+          committeeMemberId: committeeMember._id,
+          assignedDate: now,
+          status: "pending",
+          isCurrent: true,
+          isClaimed: false,
+          createdAt: now,
+          updatedAt: now,
+        });
+        createdCount++;
+      }
+    }
+
+    // Assign female members to female committee (round-robin)
+    if (femaleCommittee.length > 0) {
+      for (let i = 0; i < femaleMembers.length; i++) {
+        const committeeMember = femaleCommittee[i % femaleCommittee.length];
+        await ctx.db.insert("communicationAssignments", {
+          memberId: femaleMembers[i]._id,
+          committeeMemberId: committeeMember._id,
+          assignedDate: now,
+          status: "pending",
+          isCurrent: true,
+          isClaimed: false,
+          createdAt: now,
+          updatedAt: now,
+        });
+        createdCount++;
+      }
+    }
+
+    return {
+      deletedCount: existingAssignments.length,
+      createdCount,
+      maleAssignments: maleMembers.length,
+      femaleAssignments: femaleMembers.length,
+      committeeMembers: committeeMembers.map((c) => `${c.firstName} ${c.lastName}`),
     };
   },
 });

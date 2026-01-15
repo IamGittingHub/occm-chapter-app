@@ -22,6 +22,14 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
       if (redirectTo.startsWith("http://localhost")) {
         return redirectTo;
       }
+      // Handle relative paths (e.g., "/dashboard") - construct absolute URL
+      if (redirectTo.startsWith("/")) {
+        if (siteUrl) {
+          return `${siteUrl}${redirectTo}`;
+        }
+        // Fallback for development without SITE_URL
+        return `http://localhost:3000${redirectTo}`;
+      }
       // Reject other URLs
       throw new Error(`Invalid redirectTo URI: ${redirectTo}`);
     },

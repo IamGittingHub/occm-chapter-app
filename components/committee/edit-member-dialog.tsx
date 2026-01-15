@@ -4,11 +4,12 @@ import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { useMutation } from 'convex/react';
+import { useMutation, useQuery } from 'convex/react';
 import { api } from '@/convex/_generated/api';
 import { Id } from '@/convex/_generated/dataModel';
 import { CommitteeMember, Gender } from '@/types/database';
 import { genderOptions } from '@/lib/validators/member';
+import { roleOptions, roleValues, Role } from '@/lib/validators/committee';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -41,12 +42,13 @@ const editMemberSchema = z.object({
   last_name: z.string().min(1, 'Last name is required'),
   gender: z.enum(['male', 'female'] as const),
   phone: z.string().optional(),
+  role: z.enum(roleValues).optional(),
 });
 
 type EditMemberFormValues = z.infer<typeof editMemberSchema>;
 
 interface EditCommitteeMemberDialogProps {
-  member: CommitteeMember & { _id?: Id<"committeeMembers"> };
+  member: CommitteeMember & { _id?: Id<"committeeMembers">; role?: Role };
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -60,6 +62,8 @@ export function EditCommitteeMemberDialog({
   const [isLoading, setIsLoading] = useState(false);
 
   const updateMember = useMutation(api.committeeMembers.update);
+  const myRole = useQuery(api.committeeMembers.getMyRole);
+  const canAssignRoles = myRole?.role === 'developer';
 
   // Get the Convex ID - either from _id or from id field
   const convexId = member._id || member.id as Id<"committeeMembers">;
@@ -71,6 +75,7 @@ export function EditCommitteeMemberDialog({
       last_name: member.last_name,
       gender: member.gender as Gender,
       phone: member.phone || '',
+      role: (member.role as Role) || 'committee_member',
     },
   });
 
@@ -82,6 +87,7 @@ export function EditCommitteeMemberDialog({
         last_name: member.last_name,
         gender: member.gender as Gender,
         phone: member.phone || '',
+        role: (member.role as Role) || 'committee_member',
       });
     }
   }, [open, member, form]);
@@ -96,6 +102,7 @@ export function EditCommitteeMemberDialog({
         lastName: data.last_name,
         gender: data.gender,
         phone: data.phone || undefined,
+        role: canAssignRoles ? data.role : undefined,
       });
 
       toast({
@@ -194,6 +201,33 @@ export function EditCommitteeMemberDialog({
                 </FormItem>
               )}
             />
+
+            {canAssignRoles && (
+              <FormField
+                control={form.control}
+                name="role"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Role</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value || 'committee_member'}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select role" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {roleOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
 
             <div className="bg-muted rounded-lg p-3">
               <p className="text-sm text-muted-foreground">

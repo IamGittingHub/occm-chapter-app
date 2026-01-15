@@ -3,6 +3,7 @@ import { query, mutation, internalMutation } from "./_generated/server";
 import { requireCommitteeMember, isExampleEmail } from "./lib/auth";
 import { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
+import { isSandboxMode, generateMockPrayerAssignments } from "./lib/sandbox";
 
 // Helper to get period dates for a given month
 function getPeriodDates(date: Date): { periodStart: string; periodEnd: string } {
@@ -449,11 +450,19 @@ export const triggerRotation = mutation({
 
 /**
  * Claim a prayer assignment (prevents rotation away from this committee member).
+ * In sandbox mode with mock IDs, returns success without writing to database.
  */
 export const claim = mutation({
   args: { assignmentId: v.id("prayerAssignments") },
   handler: async (ctx, args) => {
     const { committeeMember } = await requireCommitteeMember(ctx);
+
+    // Check for sandbox mode mock ID
+    const idStr = args.assignmentId as string;
+    if (idStr.startsWith("mock_")) {
+      // Sandbox mode - return success without writing
+      return { success: true, sandbox: true };
+    }
 
     const assignment = await ctx.db.get(args.assignmentId);
     if (!assignment) {
@@ -473,16 +482,26 @@ export const claim = mutation({
       isClaimed: true,
       claimedAt: Date.now(),
     });
+
+    return { success: true, sandbox: false };
   },
 });
 
 /**
  * Release a prayer assignment claim.
+ * In sandbox mode with mock IDs, returns success without writing to database.
  */
 export const releaseClaim = mutation({
   args: { assignmentId: v.id("prayerAssignments") },
   handler: async (ctx, args) => {
     const { committeeMember } = await requireCommitteeMember(ctx);
+
+    // Check for sandbox mode mock ID
+    const idStr = args.assignmentId as string;
+    if (idStr.startsWith("mock_")) {
+      // Sandbox mode - return success without writing
+      return { success: true, sandbox: true };
+    }
 
     const assignment = await ctx.db.get(args.assignmentId);
     if (!assignment) {
@@ -502,6 +521,8 @@ export const releaseClaim = mutation({
       isClaimed: false,
       claimedAt: undefined,
     });
+
+    return { success: true, sandbox: false };
   },
 });
 
@@ -520,6 +541,244 @@ export const resetAll = mutation({
     }
 
     return { deletedAssignments: assignments.length };
+  },
+});
+
+/**
+ * Reset and regenerate prayer assignments for current period.
+ * This deletes existing assignments and creates new ones with current committee members.
+ * Only regular committee members (not developers/overseers) receive assignments.
+ */
+export const resetAndRegenerate = mutation({
+  args: { targetDate: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    await requireCommitteeMember(ctx);
+
+    const targetDateObj = args.targetDate ? new Date(args.targetDate) : new Date();
+    const { periodStart, periodEnd } = getPeriodDates(targetDateObj);
+
+    // Delete existing assignments for this period
+    const existing = await ctx.db
+      .query("prayerAssignments")
+      .withIndex("by_periodStart", (q) => q.eq("periodStart", periodStart))
+      .collect();
+
+    for (const a of existing) {
+      await ctx.db.delete(a._id);
+    }
+
+    // Get active, non-graduated members
+    const members = await ctx.db
+      .query("members")
+      .withIndex("by_isActive_isGraduated", (q) =>
+        q.eq("isActive", true).eq("isGraduated", false)
+      )
+      .collect();
+
+    // Get active committee members who do outreach (exclude developers/overseers)
+    const allCommittee = await ctx.db
+      .query("committeeMembers")
+      .withIndex("by_isActive", (q) => q.eq("isActive", true))
+      .collect();
+
+    // Filter: only committee_member role (not developer or overseer)
+    const committeeMembers = allCommittee.filter((c) => {
+      if (isExampleEmail(c.email)) return false;
+      const role = c.role ?? "committee_member";
+      return role === "committee_member";
+    });
+
+    if (members.length === 0) {
+      throw new Error("No active members to assign");
+    }
+    if (committeeMembers.length === 0) {
+      throw new Error("No active committee members to assign to");
+    }
+
+    // Separate by gender
+    const maleMembers = shuffleArray(members.filter((m) => m.gender === "male"));
+    const femaleMembers = shuffleArray(members.filter((m) => m.gender === "female"));
+    const maleCommittee = committeeMembers.filter((c) => c.gender === "male");
+    const femaleCommittee = committeeMembers.filter((c) => c.gender === "female");
+
+    const now = Date.now();
+    const assignments: {
+      memberId: Id<"members">;
+      committeeMemberId: Id<"committeeMembers">;
+      periodStart: string;
+      periodEnd: string;
+      bucketNumber: number;
+      isClaimed: boolean;
+      createdAt: number;
+    }[] = [];
+
+    // Assign males
+    const numMaleBuckets = maleCommittee.length;
+    if (numMaleBuckets > 0) {
+      maleMembers.forEach((member, index) => {
+        const bucketNumber = (index % numMaleBuckets) + 1;
+        const committeeIdx = (bucketNumber - 1) % maleCommittee.length;
+        assignments.push({
+          memberId: member._id,
+          committeeMemberId: maleCommittee[committeeIdx]._id,
+          periodStart,
+          periodEnd,
+          bucketNumber,
+          isClaimed: false,
+          createdAt: now,
+        });
+      });
+    }
+
+    // Assign females
+    const numFemaleBuckets = femaleCommittee.length;
+    if (numFemaleBuckets > 0) {
+      femaleMembers.forEach((member, index) => {
+        const bucketNumber = (index % numFemaleBuckets) + 1;
+        const committeeIdx = (bucketNumber - 1) % femaleCommittee.length;
+        assignments.push({
+          memberId: member._id,
+          committeeMemberId: femaleCommittee[committeeIdx]._id,
+          periodStart,
+          periodEnd,
+          bucketNumber,
+          isClaimed: false,
+          createdAt: now,
+        });
+      });
+    }
+
+    // Insert all assignments
+    for (const assignment of assignments) {
+      await ctx.db.insert("prayerAssignments", assignment);
+    }
+
+    return {
+      deletedCount: existing.length,
+      createdCount: assignments.length,
+      periodStart,
+      maleAssignments: maleMembers.length,
+      femaleAssignments: femaleMembers.length,
+      committeeMembers: committeeMembers.map((c) => `${c.firstName} ${c.lastName}`),
+    };
+  },
+});
+
+/**
+ * Internal version of resetAndRegenerate for CLI usage.
+ * This can be run via: npx convex run prayerAssignments:internalResetAndRegenerate
+ */
+export const internalResetAndRegenerate = internalMutation({
+  args: { targetDate: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const targetDateObj = args.targetDate ? new Date(args.targetDate) : new Date();
+    const { periodStart, periodEnd } = getPeriodDates(targetDateObj);
+
+    // Delete existing assignments for this period
+    const existing = await ctx.db
+      .query("prayerAssignments")
+      .withIndex("by_periodStart", (q) => q.eq("periodStart", periodStart))
+      .collect();
+
+    for (const a of existing) {
+      await ctx.db.delete(a._id);
+    }
+
+    // Get active, non-graduated members
+    const members = await ctx.db
+      .query("members")
+      .withIndex("by_isActive_isGraduated", (q) =>
+        q.eq("isActive", true).eq("isGraduated", false)
+      )
+      .collect();
+
+    // Get active committee members who do outreach (exclude developers/overseers)
+    const allCommittee = await ctx.db
+      .query("committeeMembers")
+      .withIndex("by_isActive", (q) => q.eq("isActive", true))
+      .collect();
+
+    // Filter: only committee_member role (not developer or overseer)
+    const committeeMembers = allCommittee.filter((c) => {
+      if (isExampleEmail(c.email)) return false;
+      const role = c.role ?? "committee_member";
+      return role === "committee_member";
+    });
+
+    if (members.length === 0) {
+      return { error: "No active members to assign" };
+    }
+    if (committeeMembers.length === 0) {
+      return { error: "No active committee members to assign to" };
+    }
+
+    // Separate by gender
+    const maleMembers = shuffleArray(members.filter((m) => m.gender === "male"));
+    const femaleMembers = shuffleArray(members.filter((m) => m.gender === "female"));
+    const maleCommittee = committeeMembers.filter((c) => c.gender === "male");
+    const femaleCommittee = committeeMembers.filter((c) => c.gender === "female");
+
+    const now = Date.now();
+    const assignments: {
+      memberId: Id<"members">;
+      committeeMemberId: Id<"committeeMembers">;
+      periodStart: string;
+      periodEnd: string;
+      bucketNumber: number;
+      isClaimed: boolean;
+      createdAt: number;
+    }[] = [];
+
+    // Assign males
+    const numMaleBuckets = maleCommittee.length;
+    if (numMaleBuckets > 0) {
+      maleMembers.forEach((member, index) => {
+        const bucketNumber = (index % numMaleBuckets) + 1;
+        const committeeIdx = (bucketNumber - 1) % maleCommittee.length;
+        assignments.push({
+          memberId: member._id,
+          committeeMemberId: maleCommittee[committeeIdx]._id,
+          periodStart,
+          periodEnd,
+          bucketNumber,
+          isClaimed: false,
+          createdAt: now,
+        });
+      });
+    }
+
+    // Assign females
+    const numFemaleBuckets = femaleCommittee.length;
+    if (numFemaleBuckets > 0) {
+      femaleMembers.forEach((member, index) => {
+        const bucketNumber = (index % numFemaleBuckets) + 1;
+        const committeeIdx = (bucketNumber - 1) % femaleCommittee.length;
+        assignments.push({
+          memberId: member._id,
+          committeeMemberId: femaleCommittee[committeeIdx]._id,
+          periodStart,
+          periodEnd,
+          bucketNumber,
+          isClaimed: false,
+          createdAt: now,
+        });
+      });
+    }
+
+    // Insert all assignments
+    for (const assignment of assignments) {
+      await ctx.db.insert("prayerAssignments", assignment);
+    }
+
+    return {
+      success: true,
+      deletedCount: existing.length,
+      createdCount: assignments.length,
+      periodStart,
+      maleAssignments: maleMembers.length,
+      femaleAssignments: femaleMembers.length,
+      committeeMembers: committeeMembers.map((c) => `${c.firstName} ${c.lastName}`),
+    };
   },
 });
 
@@ -793,6 +1052,40 @@ export const rotateBucketsDryRun = query({
 });
 
 /**
+ * Debug: List all prayer assignments (internal use).
+ */
+export const debugListAll = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const assignments = await ctx.db.query("prayerAssignments").collect();
+
+    // Get committee member details
+    const details = await Promise.all(
+      assignments.map(async (a) => {
+        const cm = await ctx.db.get(a.committeeMemberId);
+        const member = await ctx.db.get(a.memberId);
+        return {
+          periodStart: a.periodStart,
+          committeeMember: cm ? `${cm.firstName} ${cm.lastName}` : "Unknown",
+          committeeMemberEmail: cm?.email,
+          member: member ? `${member.firstName} ${member.lastName}` : "Unknown",
+          bucketNumber: a.bucketNumber,
+        };
+      })
+    );
+
+    return {
+      total: assignments.length,
+      byPeriod: details.reduce((acc, d) => {
+        acc[d.periodStart] = (acc[d.periodStart] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>),
+      sample: details.slice(0, 10),
+    };
+  },
+});
+
+/**
  * Get stats for prayer assignments.
  */
 export const getStats = query({
@@ -818,6 +1111,7 @@ export const getStats = query({
 
 /**
  * Get assignments for the current user (with member details).
+ * In sandbox mode (test mode + developer/overseer), returns mock data.
  */
 export const getMyAssignments = query({
   args: {},
@@ -825,7 +1119,22 @@ export const getMyAssignments = query({
     const { committeeMember } = await requireCommitteeMember(ctx);
 
     // Get current period
-    const { periodStart } = getPeriodDates(new Date());
+    const { periodStart, periodEnd } = getPeriodDates(new Date());
+
+    // Check if sandbox mode is active
+    const sandboxActive = await isSandboxMode(ctx, committeeMember);
+    if (sandboxActive) {
+      // Return mock data for developers/overseers in test mode
+      const mockAssignments = await generateMockPrayerAssignments(
+        ctx,
+        committeeMember._id,
+        periodStart,
+        periodEnd
+      );
+      return mockAssignments.sort((a, b) =>
+        (a.member?.lastName || "").localeCompare(b.member?.lastName || "")
+      );
+    }
 
     const assignments = await ctx.db
       .query("prayerAssignments")

@@ -22,6 +22,7 @@ export default function SettingsPage() {
     unresponsive_threshold_days: settings.unresponsive_threshold_days || '30',
     rotation_day_of_month: settings.rotation_day_of_month || '1',
     current_rotation_month: settings.current_rotation_month || '',
+    test_mode: settings.test_mode || 'false',
   };
 
   return (

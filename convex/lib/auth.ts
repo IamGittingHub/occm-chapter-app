@@ -1,6 +1,7 @@
 import { QueryCtx, MutationCtx } from "../_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { Doc, Id } from "../_generated/dataModel";
+import { Role } from "../schema";
 
 /**
  * Get the authenticated user ID or throw if not authenticated.
@@ -151,4 +152,104 @@ export function requireNotSelf(
  */
 export function isExampleEmail(email: string): boolean {
   return email.toLowerCase().includes("@example.com");
+}
+
+// ============================================================================
+// Role-Based Access Control
+// ============================================================================
+
+/**
+ * Get the effective role for a committee member.
+ * Returns "committee_member" if role is undefined (backward compatibility).
+ */
+export function getEffectiveRole(committeeMember: Doc<"committeeMembers">): Role {
+  return committeeMember.role ?? "committee_member";
+}
+
+/**
+ * Check if a role has developer-level access.
+ */
+export function isDeveloper(role: Role): boolean {
+  return role === "developer";
+}
+
+/**
+ * Check if a role has overseer-level access (overseer or developer).
+ */
+export function isOverseerOrAbove(role: Role): boolean {
+  return role === "developer" || role === "overseer";
+}
+
+/**
+ * Require the current user to be a developer.
+ * Throws if the user doesn't have developer role.
+ */
+export async function requireDeveloper(
+  ctx: QueryCtx | MutationCtx
+): Promise<{
+  userId: Id<"users">;
+  committeeMember: Doc<"committeeMembers">;
+}> {
+  const { userId, committeeMember } = await requireCommitteeMember(ctx);
+  const role = getEffectiveRole(committeeMember);
+
+  if (!isDeveloper(role)) {
+    throw new Error("Access denied: This action requires developer privileges");
+  }
+
+  return { userId, committeeMember };
+}
+
+/**
+ * Require the current user to be an overseer or developer.
+ * Throws if the user doesn't have sufficient privileges.
+ */
+export async function requireOverseerOrAbove(
+  ctx: QueryCtx | MutationCtx
+): Promise<{
+  userId: Id<"users">;
+  committeeMember: Doc<"committeeMembers">;
+}> {
+  const { userId, committeeMember } = await requireCommitteeMember(ctx);
+  const role = getEffectiveRole(committeeMember);
+
+  if (!isOverseerOrAbove(role)) {
+    throw new Error("Access denied: This action requires overseer or developer privileges");
+  }
+
+  return { userId, committeeMember };
+}
+
+/**
+ * Check if a committee member can edit another committee member.
+ * - Developers can edit anyone
+ * - Overseers cannot edit anyone (view only)
+ * - Committee members can only edit themselves
+ */
+export function canEditCommitteeMember(
+  editorMember: Doc<"committeeMembers">,
+  targetMemberId: Id<"committeeMembers">
+): boolean {
+  const role = getEffectiveRole(editorMember);
+
+  // Developers can edit anyone
+  if (role === "developer") {
+    return true;
+  }
+
+  // Overseers cannot edit (view only)
+  if (role === "overseer") {
+    return false;
+  }
+
+  // Committee members can only edit themselves
+  return editorMember._id === targetMemberId;
+}
+
+/**
+ * Check if a committee member can assign roles.
+ * Only developers can assign roles.
+ */
+export function canAssignRoles(committeeMember: Doc<"committeeMembers">): boolean {
+  return getEffectiveRole(committeeMember) === "developer";
 }

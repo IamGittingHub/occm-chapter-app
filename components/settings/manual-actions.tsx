@@ -1,9 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { useMutation } from 'convex/react';
+import { useMutation, useQuery } from 'convex/react';
 import { api } from '@/convex/_generated/api';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,19 +17,35 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { useToast } from '@/lib/hooks/use-toast';
-import { Loader2, RotateCcw, ArrowRightLeft, Trash2 } from 'lucide-react';
+import { Loader2, RotateCcw, ArrowRightLeft, Trash2, FlaskConical, Eye } from 'lucide-react';
 
 export function ManualActions() {
   const { toast } = useToast();
   const [isRotating, setIsRotating] = useState(false);
   const [isTransferring, setIsTransferring] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
+  const [showRotationPreview, setShowRotationPreview] = useState(false);
+  const [showTransferPreview, setShowTransferPreview] = useState(false);
+
+  const settings = useQuery(api.appSettings.getAll);
+  const testMode = settings?.test_mode === 'true';
 
   const triggerRotation = useMutation(api.prayerAssignments.triggerRotation);
   const triggerAutoTransfers = useMutation(api.communicationAssignments.triggerAutoTransfers);
   const resetPrayerAssignments = useMutation(api.prayerAssignments.resetAll);
   const resetCommunicationAssignments = useMutation(api.communicationAssignments.resetAll);
+
+  // Dry-run queries for test mode previews
+  const rotationPreview = useQuery(api.prayerAssignments.rotateBucketsDryRun, {});
+  const transferPreview = useQuery(api.communicationAssignments.processAutoTransfersDryRun, {});
 
   async function handleRotation() {
     setIsRotating(true);
@@ -87,82 +105,112 @@ export function ManualActions() {
 
   return (
     <div className="space-y-4">
+      {/* Test Mode Indicator */}
+      {testMode && (
+        <div className="flex items-center gap-2 p-3 bg-purple-50 border border-purple-200 rounded-lg">
+          <FlaskConical className="h-4 w-4 text-purple-600" />
+          <span className="text-sm text-purple-700 font-medium">
+            Test Mode Active - Actions will show previews only
+          </span>
+        </div>
+      )}
+
       {/* Rotate Prayer Buckets */}
       <div className="flex items-center justify-between p-4 border rounded-lg">
         <div>
-          <h4 className="font-medium">Rotate Prayer Buckets</h4>
+          <h4 className="font-medium flex items-center gap-2">
+            Rotate Prayer Buckets
+            {testMode && <Badge variant="outline" className="text-xs">Preview Only</Badge>}
+          </h4>
           <p className="text-sm text-muted-foreground">
             Manually trigger the monthly prayer bucket rotation
           </p>
         </div>
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <Button variant="outline" disabled={isRotating}>
-              {isRotating ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <RotateCcw className="mr-2 h-4 w-4" />
-              )}
-              Rotate
-            </Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Rotate Prayer Buckets</AlertDialogTitle>
-              <AlertDialogDescription>
-                This will rotate all prayer bucket assignments for the current month.
-                Members will be reassigned to different committee members based on their bucket numbers.
-                <br /><br />
-                This action is typically run automatically on the 1st of each month.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={handleRotation}>
-                Rotate Now
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        {testMode ? (
+          <Button variant="outline" onClick={() => setShowRotationPreview(true)}>
+            <Eye className="mr-2 h-4 w-4" />
+            Preview
+          </Button>
+        ) : (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline" disabled={isRotating}>
+                {isRotating ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <RotateCcw className="mr-2 h-4 w-4" />
+                )}
+                Rotate
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Rotate Prayer Buckets</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will rotate all prayer bucket assignments for the current month.
+                  Members will be reassigned to different committee members based on their bucket numbers.
+                  <br /><br />
+                  This action is typically run automatically on the 1st of each month.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={handleRotation}>
+                  Rotate Now
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
       </div>
 
       {/* Process Auto Transfers */}
       <div className="flex items-center justify-between p-4 border rounded-lg">
         <div>
-          <h4 className="font-medium">Process Auto-Transfers</h4>
+          <h4 className="font-medium flex items-center gap-2">
+            Process Auto-Transfers
+            {testMode && <Badge variant="outline" className="text-xs">Preview Only</Badge>}
+          </h4>
           <p className="text-sm text-muted-foreground">
             Transfer members who have been unresponsive past the threshold
           </p>
         </div>
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <Button variant="outline" disabled={isTransferring}>
-              {isTransferring ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <ArrowRightLeft className="mr-2 h-4 w-4" />
-              )}
-              Transfer
-            </Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Process Auto-Transfers</AlertDialogTitle>
-              <AlertDialogDescription>
-                This will find all communication assignments that have been pending for longer than
-                the threshold and transfer them to the next available committee member.
-                <br /><br />
-                This action is typically run automatically every day.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={handleAutoTransfer}>
-                Transfer Now
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        {testMode ? (
+          <Button variant="outline" onClick={() => setShowTransferPreview(true)}>
+            <Eye className="mr-2 h-4 w-4" />
+            Preview
+          </Button>
+        ) : (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline" disabled={isTransferring}>
+                {isTransferring ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <ArrowRightLeft className="mr-2 h-4 w-4" />
+                )}
+                Transfer
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Process Auto-Transfers</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will find all communication assignments that have been pending for longer than
+                  the threshold and transfer them to the next available committee member.
+                  <br /><br />
+                  This action is typically run automatically every day.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={handleAutoTransfer}>
+                  Transfer Now
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
       </div>
 
       {/* Reset All Assignments */}
@@ -215,6 +263,110 @@ export function ManualActions() {
           </AlertDialogContent>
         </AlertDialog>
       </div>
+
+      {/* Rotation Preview Dialog */}
+      <Dialog open={showRotationPreview} onOpenChange={setShowRotationPreview}>
+        <DialogContent className="max-w-2xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FlaskConical className="h-5 w-5 text-purple-600" />
+              Prayer Rotation Preview
+            </DialogTitle>
+            <DialogDescription>
+              This is a preview of what would happen if you rotate the prayer buckets.
+              No changes have been made.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {rotationPreview ? (
+              rotationPreview.wouldSucceed ? (
+                <>
+                  <div className="bg-muted p-3 rounded-lg">
+                    <p className="text-sm">
+                      <strong>From:</strong> {rotationPreview.fromPeriod} <strong>To:</strong> {rotationPreview.toPeriod}
+                    </p>
+                    <p className="text-sm mt-1">
+                      <strong>Total:</strong> {rotationPreview.summary?.totalAssignments || 0} assignments
+                      ({rotationPreview.summary?.rotating || 0} rotating, {rotationPreview.summary?.staying || 0} staying)
+                    </p>
+                  </div>
+                  <ScrollArea className="h-[300px] border rounded-lg p-3">
+                    <div className="space-y-2">
+                      {rotationPreview.changes?.map((change, index) => (
+                        <div key={index} className="text-sm p-2 bg-muted/50 rounded">
+                          <strong>{change.memberName}</strong>: {change.fromCommitteeMember} (bucket {change.fromBucket})
+                          → {change.toCommitteeMember} (bucket {change.toBucket})
+                          <Badge variant="outline" className="ml-2 text-xs">{change.action}</Badge>
+                        </div>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                </>
+              ) : (
+                <div className="text-amber-600 bg-amber-50 p-3 rounded-lg">
+                  {rotationPreview.reason}
+                </div>
+              )
+            ) : (
+              <div className="flex items-center justify-center p-8">
+                <Loader2 className="h-6 w-6 animate-spin" />
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Transfer Preview Dialog */}
+      <Dialog open={showTransferPreview} onOpenChange={setShowTransferPreview}>
+        <DialogContent className="max-w-2xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FlaskConical className="h-5 w-5 text-purple-600" />
+              Auto-Transfer Preview
+            </DialogTitle>
+            <DialogDescription>
+              This is a preview of members that would be auto-transferred.
+              No changes have been made.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {transferPreview ? (
+              transferPreview.transfers && transferPreview.transfers.length > 0 ? (
+                <>
+                  <div className="bg-muted p-3 rounded-lg">
+                    <p className="text-sm">
+                      <strong>{transferPreview.transfers.length}</strong> members would be transferred
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      Threshold: {transferPreview.thresholdDays} days
+                    </p>
+                  </div>
+                  <ScrollArea className="h-[300px] border rounded-lg p-3">
+                    <div className="space-y-2">
+                      {transferPreview.transfers.map((transfer, index) => (
+                        <div key={index} className="text-sm p-2 bg-muted/50 rounded">
+                          <strong>{transfer.memberName}</strong>: {transfer.fromCommitteeMember} → {transfer.toCommitteeMember}
+                          <span className="text-muted-foreground ml-2">
+                            (pending {transfer.daysSinceAssigned} days)
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                </>
+              ) : (
+                <div className="text-green-600 bg-green-50 p-3 rounded-lg">
+                  No members are past the threshold. No transfers needed.
+                </div>
+              )
+            ) : (
+              <div className="flex items-center justify-center p-8">
+                <Loader2 className="h-6 w-6 animate-spin" />
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

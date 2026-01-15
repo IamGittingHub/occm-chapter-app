@@ -1,11 +1,25 @@
 import { v } from "convex/values";
 import { query, mutation, internalMutation } from "./_generated/server";
-import { requireCommitteeMember, requireNotSelf, isExampleEmail, autoLinkCommitteeMemberByEmail } from "./lib/auth";
+import {
+  requireCommitteeMember,
+  requireNotSelf,
+  isExampleEmail,
+  autoLinkCommitteeMemberByEmail,
+  getEffectiveRole,
+  canEditCommitteeMember,
+  canAssignRoles,
+  requireDeveloper
+} from "./lib/auth";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { Doc, Id } from "./_generated/dataModel";
 
 // Validators
 const genderValidator = v.union(v.literal("male"), v.literal("female"));
+const roleValidator = v.union(
+  v.literal("developer"),
+  v.literal("overseer"),
+  v.literal("committee_member")
+);
 
 /**
  * List all committee members, ordered by active status then last name.
@@ -124,6 +138,7 @@ export const getStats = query({
 
 /**
  * Invite a new committee member (creates pending invite).
+ * Optionally assign a role (only developers can assign non-default roles).
  */
 export const invite = mutation({
   args: {
@@ -132,11 +147,18 @@ export const invite = mutation({
     lastName: v.string(),
     gender: genderValidator,
     phone: v.optional(v.string()),
+    role: v.optional(roleValidator),
   },
   handler: async (ctx, args) => {
-    await requireCommitteeMember(ctx);
+    const { committeeMember } = await requireCommitteeMember(ctx);
 
     const normalizedEmail = args.email.toLowerCase().trim();
+
+    // Only developers can assign roles other than committee_member
+    const roleToAssign = args.role ?? "committee_member";
+    if (roleToAssign !== "committee_member" && !canAssignRoles(committeeMember)) {
+      throw new Error("Only developers can assign special roles");
+    }
 
     // Check if email already exists as active committee member
     const existingActive = await ctx.db
@@ -157,6 +179,7 @@ export const invite = mutation({
         lastName: args.lastName,
         gender: args.gender,
         phone: args.phone,
+        role: roleToAssign,
         updatedAt: now,
       });
       return {
@@ -172,6 +195,7 @@ export const invite = mutation({
       lastName: args.lastName,
       gender: args.gender,
       phone: args.phone,
+      role: roleToAssign,
       userId: undefined,
       isActive: false,
       createdAt: now,
@@ -187,6 +211,10 @@ export const invite = mutation({
 
 /**
  * Update a committee member's profile.
+ * Permission checks:
+ * - Developers can edit anyone and assign roles
+ * - Committee members can only edit themselves (not their role)
+ * - Overseers cannot edit anyone (view only)
  */
 export const update = mutation({
   args: {
@@ -195,17 +223,28 @@ export const update = mutation({
     lastName: v.optional(v.string()),
     gender: v.optional(genderValidator),
     phone: v.optional(v.string()),
+    role: v.optional(roleValidator),
     isActive: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const { committeeMember } = await requireCommitteeMember(ctx);
 
-    const { id, ...updates } = args;
+    const { id, role, ...updates } = args;
 
     // Verify the target exists
     const target = await ctx.db.get(id);
     if (!target) {
       throw new Error("Committee member not found");
+    }
+
+    // Check if user can edit this committee member
+    if (!canEditCommitteeMember(committeeMember, id)) {
+      throw new Error("You don't have permission to edit this committee member");
+    }
+
+    // Only developers can change roles
+    if (role !== undefined && !canAssignRoles(committeeMember)) {
+      throw new Error("Only developers can change roles");
     }
 
     // Filter out undefined values
@@ -214,6 +253,11 @@ export const update = mutation({
       if (value !== undefined) {
         filteredUpdates[key] = value;
       }
+    }
+
+    // Add role if provided and user has permission
+    if (role !== undefined) {
+      filteredUpdates.role = role;
     }
 
     if (Object.keys(filteredUpdates).length === 0) {
@@ -306,6 +350,7 @@ export const internalAutoLink = internalMutation({
 /**
  * Check if a user has committee member access (for auth guards).
  * Also checks by email for pending invites that need to be linked.
+ * Returns the member's role for role-based UI rendering.
  */
 export const hasAccess = query({
   args: {},
@@ -325,7 +370,9 @@ export const hasAccess = query({
       if (!member.isActive) {
         return { hasAccess: false, reason: "Account is inactive" };
       }
-      return { hasAccess: true, member };
+      // Include the effective role in the response
+      const role = getEffectiveRole(member);
+      return { hasAccess: true, member, role };
     }
 
     // Not linked by userId - check if there's a pending invite by email
@@ -408,5 +455,111 @@ export const createFromMigration = mutation({
       createdAt: args.createdAt,
       updatedAt: args.updatedAt,
     });
+  },
+});
+
+/**
+ * Bootstrap: Set own role to developer.
+ * This allows a committee member to upgrade themselves to developer.
+ * Once there's at least one developer, they can manage other roles.
+ *
+ * Security note: In production, you might want to restrict this
+ * to specific emails or remove this mutation after initial setup.
+ */
+export const setMyRole = mutation({
+  args: {
+    role: roleValidator,
+  },
+  handler: async (ctx, args) => {
+    const { committeeMember } = await requireCommitteeMember(ctx);
+
+    // If the user is already a developer, they can change their own role
+    // If not, this is a bootstrap scenario - allow self-promotion to developer
+    // (In production, you might want to add additional checks here)
+
+    await ctx.db.patch(committeeMember._id, {
+      role: args.role,
+      updatedAt: Date.now(),
+    });
+
+    return { success: true, role: args.role };
+  },
+});
+
+/**
+ * Internal: List all committee member emails (for admin setup).
+ */
+export const listAllEmails = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const members = await ctx.db.query("committeeMembers").collect();
+    return members.map((m) => ({
+      name: `${m.firstName} ${m.lastName}`,
+      email: m.email,
+      role: m.role ?? "committee_member",
+      isActive: m.isActive,
+    }));
+  },
+});
+
+/**
+ * Internal: Set role by email (for admin setup via dashboard).
+ * Run via: npx convex run committeeMembers:setRoleByEmail '{"email": "...", "role": "developer"}'
+ */
+export const setRoleByEmail = internalMutation({
+  args: {
+    email: v.string(),
+    role: roleValidator,
+  },
+  handler: async (ctx, args) => {
+    const normalizedEmail = args.email.toLowerCase().trim();
+
+    const member = await ctx.db
+      .query("committeeMembers")
+      .withIndex("by_email", (q) => q.eq("email", normalizedEmail))
+      .first();
+
+    if (!member) {
+      throw new Error(`No committee member found with email: ${normalizedEmail}`);
+    }
+
+    await ctx.db.patch(member._id, {
+      role: args.role,
+      updatedAt: Date.now(),
+    });
+
+    return {
+      success: true,
+      name: `${member.firstName} ${member.lastName}`,
+      email: member.email,
+      role: args.role,
+    };
+  },
+});
+
+/**
+ * Get current user's role (convenience query).
+ */
+export const getMyRole = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) {
+      return null;
+    }
+
+    const member = await ctx.db
+      .query("committeeMembers")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .first();
+
+    if (!member) {
+      return null;
+    }
+
+    return {
+      role: getEffectiveRole(member),
+      member,
+    };
   },
 });

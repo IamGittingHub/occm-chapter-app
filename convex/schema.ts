@@ -25,6 +25,13 @@ const communicationStatusValidator = v.union(
   v.literal("transferred")
 );
 
+// Committee member roles
+const roleValidator = v.union(
+  v.literal("developer"),       // Can see everything, test all features
+  v.literal("overseer"),        // Overview dashboard, doesn't do outreach
+  v.literal("committee_member") // Regular active member doing outreach
+);
+
 export default defineSchema({
   // Auth tables from @convex-dev/auth
   ...authTables,
@@ -69,6 +76,9 @@ export default defineSchema({
     lastName: v.string(),
     gender: genderValidator,
     phone: v.optional(v.string()),
+    // Role determines what features the member can access
+    // Optional for backward compat - defaults to "committee_member" in code
+    role: v.optional(roleValidator),
     isActive: v.boolean(),
     createdAt: v.number(), // Epoch ms
     updatedAt: v.number(), // Epoch ms
@@ -226,3 +236,4 @@ export type Gender = "male" | "female";
 export type Grade = "freshman" | "sophomore" | "junior" | "senior" | "grad" | "unknown";
 export type ContactMethod = "text" | "call" | "email" | "in_person" | "other";
 export type CommunicationStatus = "pending" | "successful" | "transferred";
+export type Role = "developer" | "overseer" | "committee_member";
