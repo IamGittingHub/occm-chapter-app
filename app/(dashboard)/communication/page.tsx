@@ -59,7 +59,7 @@ export default function CommunicationPage() {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       },
-      communication_logs: (a.logs || []).map(l => ({
+      communication_logs: (a.communicationLogs || []).map(l => ({
         id: l._id as string,
         assignment_id: l.assignmentId as string,
         committee_member_id: l.committeeMemberId as string,

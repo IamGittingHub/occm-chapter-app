@@ -245,6 +245,37 @@ export const getRotationInfo = query({
 });
 
 /**
+ * Get sandbox mode status for UI indicator.
+ * Returns whether the user is viewing sandbox/mock data.
+ */
+export const getSandboxStatus = query({
+  args: {},
+  handler: async (ctx) => {
+    const { committeeMember } = await requireCommitteeMember(ctx);
+
+    // Check if test mode is enabled
+    const testModeSetting = await ctx.db
+      .query("appSettings")
+      .withIndex("by_settingKey", (q) => q.eq("settingKey", "test_mode"))
+      .first();
+
+    const testModeEnabled = testModeSetting?.settingValue === "true";
+    const role = getEffectiveRole(committeeMember);
+    const isDevOrOverseer = role === "developer" || role === "overseer";
+
+    // Sandbox mode is active when test mode is on AND user is dev/overseer
+    const isSandboxActive = testModeEnabled && isDevOrOverseer;
+
+    return {
+      isSandboxActive,
+      testModeEnabled,
+      role,
+      isDevOrOverseer,
+    };
+  },
+});
+
+/**
  * Get overseer dashboard - shows all committee members' progress.
  * Only accessible by overseers and developers.
  */

@@ -200,12 +200,12 @@ export const getMyAssignments = query({
     const assignmentsWithDetails = await Promise.all(
       assignments.map(async (a) => {
         const member = await ctx.db.get(a.memberId);
-        const logs = await ctx.db
+        const communicationLogs = await ctx.db
           .query("communicationLogs")
           .withIndex("by_assignmentId", (q) => q.eq("assignmentId", a._id))
           .collect();
         const daysSinceAssigned = daysSince(a.assignedDate);
-        return { ...a, member, logs, daysSinceAssigned };
+        return { ...a, member, communicationLogs, daysSinceAssigned };
       })
     );
 
