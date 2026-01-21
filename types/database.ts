@@ -10,6 +10,7 @@ export type Gender = 'male' | 'female';
 export type Grade = 'freshman' | 'sophomore' | 'junior' | 'senior' | 'grad' | 'unknown';
 export type ContactMethod = 'text' | 'call' | 'email' | 'in_person' | 'other';
 export type CommunicationStatus = 'pending' | 'successful' | 'transferred';
+export type Priority = 'high' | 'normal' | 'low';
 
 export interface Database {
   public: {
@@ -82,6 +83,8 @@ export interface Database {
           notes: string | null;
           is_graduated: boolean;
           is_active: boolean;
+          is_committee_member: boolean;
+          priority: Priority | null;
           created_at: string;
           updated_at: string;
         };
@@ -105,6 +108,8 @@ export interface Database {
           notes?: string | null;
           is_graduated?: boolean;
           is_active?: boolean;
+          is_committee_member?: boolean;
+          priority?: Priority | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -128,6 +133,8 @@ export interface Database {
           notes?: string | null;
           is_graduated?: boolean;
           is_active?: boolean;
+          is_committee_member?: boolean;
+          priority?: Priority | null;
           created_at?: string;
           updated_at?: string;
         };

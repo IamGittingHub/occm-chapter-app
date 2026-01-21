@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { query, mutation, internalMutation } from "./_generated/server";
-import { requireCommitteeMember, isExampleEmail } from "./lib/auth";
+import { requireCommitteeMember, isExampleEmail, receivesAssignments, getEffectiveRole } from "./lib/auth";
 import { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { isSandboxMode, generateMockPrayerAssignments } from "./lib/sandbox";
@@ -129,20 +129,28 @@ export const generateInitial = mutation({
       throw new Error(`Prayer assignments already exist for ${periodStart}`);
     }
 
-    // Get active, non-graduated members
-    const members = await ctx.db
+    // Get active, non-graduated members (excluding committee members - they don't need prayer assignments)
+    const allMembers = await ctx.db
       .query("members")
       .withIndex("by_isActive_isGraduated", (q) =>
         q.eq("isActive", true).eq("isGraduated", false)
       )
       .collect();
 
-    // Get active committee members (excluding example accounts)
+    // Filter out committee members - they do their own outreach and prayer
+    const members = allMembers.filter((m) => !m.isCommitteeMember);
+
+    // Get active committee members who receive assignments (committee_member, president, youth_outreach)
+    // Excludes: developer, overseer, and example accounts
     const allCommittee = await ctx.db
       .query("committeeMembers")
       .withIndex("by_isActive", (q) => q.eq("isActive", true))
       .collect();
-    const committeeMembers = allCommittee.filter((c) => !isExampleEmail(c.email));
+    const committeeMembers = allCommittee.filter((c) => {
+      if (isExampleEmail(c.email)) return false;
+      const role = getEffectiveRole(c);
+      return receivesAssignments(role);
+    });
 
     if (members.length === 0) {
       throw new Error("No active members to assign");
@@ -229,6 +237,10 @@ export const assignNewMember = mutation({
     }
     if (!member.isActive || member.isGraduated) {
       throw new Error("Member is not active or is graduated");
+    }
+    // Committee members don't receive prayer assignments
+    if (member.isCommitteeMember) {
+      throw new Error("Committee members do not receive prayer assignments");
     }
 
     // Check if already assigned this period
@@ -360,8 +372,8 @@ export const rotateBuckets = internalMutation({
     for (const prevAssignment of prevAssignments) {
       // Get the member
       const member = await ctx.db.get(prevAssignment.memberId);
-      if (!member || !member.isActive || member.isGraduated) {
-        continue; // Skip inactive/graduated members
+      if (!member || !member.isActive || member.isGraduated || member.isCommitteeMember) {
+        continue; // Skip inactive/graduated/committee members
       }
 
       const sameGenderCommittee =
@@ -546,8 +558,8 @@ export const resetAll = mutation({
 
 /**
  * Reset and regenerate prayer assignments for current period.
- * This deletes existing assignments and creates new ones with current committee members.
- * Only regular committee members (not developers/overseers) receive assignments.
+ * This preserves claimed assignments and regenerates only unclaimed ones.
+ * Includes: committee_member, president, youth_outreach roles
  */
 export const resetAndRegenerate = mutation({
   args: { targetDate: v.optional(v.string()) },
@@ -557,38 +569,52 @@ export const resetAndRegenerate = mutation({
     const targetDateObj = args.targetDate ? new Date(args.targetDate) : new Date();
     const { periodStart, periodEnd } = getPeriodDates(targetDateObj);
 
-    // Delete existing assignments for this period
+    // Get existing assignments for this period
     const existing = await ctx.db
       .query("prayerAssignments")
       .withIndex("by_periodStart", (q) => q.eq("periodStart", periodStart))
       .collect();
 
-    for (const a of existing) {
+    // Separate claimed and unclaimed assignments
+    const claimedAssignments = existing.filter((a) => a.isClaimed);
+    const claimedMemberIds = new Set(claimedAssignments.map((a) => a.memberId.toString()));
+
+    // Delete only unclaimed assignments
+    for (const a of existing.filter((a) => !a.isClaimed)) {
       await ctx.db.delete(a._id);
     }
 
-    // Get active, non-graduated members
-    const members = await ctx.db
+    // Update period dates on claimed assignments (in case period changed)
+    for (const a of claimedAssignments) {
+      await ctx.db.patch(a._id, { periodStart, periodEnd });
+    }
+
+    // Get active, non-graduated members (excluding committee members)
+    const allMembers = await ctx.db
       .query("members")
       .withIndex("by_isActive_isGraduated", (q) =>
         q.eq("isActive", true).eq("isGraduated", false)
       )
       .collect();
 
-    // Get active committee members who do outreach (exclude developers/overseers)
+    // Filter out committee members and members who are already claimed
+    const members = allMembers.filter(
+      (m) => !m.isCommitteeMember && !claimedMemberIds.has(m._id.toString())
+    );
+
+    // Get active committee members who receive assignments (committee_member, president, youth_outreach)
     const allCommittee = await ctx.db
       .query("committeeMembers")
       .withIndex("by_isActive", (q) => q.eq("isActive", true))
       .collect();
 
-    // Filter: only committee_member role (not developer or overseer)
     const committeeMembers = allCommittee.filter((c) => {
       if (isExampleEmail(c.email)) return false;
-      const role = c.role ?? "committee_member";
-      return role === "committee_member";
+      const role = getEffectiveRole(c);
+      return receivesAssignments(role);
     });
 
-    if (members.length === 0) {
+    if (members.length === 0 && claimedAssignments.length === 0) {
       throw new Error("No active members to assign");
     }
     if (committeeMembers.length === 0) {
@@ -612,7 +638,7 @@ export const resetAndRegenerate = mutation({
       createdAt: number;
     }[] = [];
 
-    // Assign males
+    // Assign males (only unclaimed members)
     const numMaleBuckets = maleCommittee.length;
     if (numMaleBuckets > 0) {
       maleMembers.forEach((member, index) => {
@@ -630,7 +656,7 @@ export const resetAndRegenerate = mutation({
       });
     }
 
-    // Assign females
+    // Assign females (only unclaimed members)
     const numFemaleBuckets = femaleCommittee.length;
     if (numFemaleBuckets > 0) {
       femaleMembers.forEach((member, index) => {
@@ -648,13 +674,14 @@ export const resetAndRegenerate = mutation({
       });
     }
 
-    // Insert all assignments
+    // Insert all new assignments
     for (const assignment of assignments) {
       await ctx.db.insert("prayerAssignments", assignment);
     }
 
     return {
-      deletedCount: existing.length,
+      deletedCount: existing.length - claimedAssignments.length,
+      preservedClaimedCount: claimedAssignments.length,
       createdCount: assignments.length,
       periodStart,
       maleAssignments: maleMembers.length,
@@ -667,6 +694,7 @@ export const resetAndRegenerate = mutation({
 /**
  * Internal version of resetAndRegenerate for CLI usage.
  * This can be run via: npx convex run prayerAssignments:internalResetAndRegenerate
+ * Preserves claimed assignments and regenerates only unclaimed ones.
  */
 export const internalResetAndRegenerate = internalMutation({
   args: { targetDate: v.optional(v.string()) },
@@ -674,38 +702,52 @@ export const internalResetAndRegenerate = internalMutation({
     const targetDateObj = args.targetDate ? new Date(args.targetDate) : new Date();
     const { periodStart, periodEnd } = getPeriodDates(targetDateObj);
 
-    // Delete existing assignments for this period
+    // Get existing assignments for this period
     const existing = await ctx.db
       .query("prayerAssignments")
       .withIndex("by_periodStart", (q) => q.eq("periodStart", periodStart))
       .collect();
 
-    for (const a of existing) {
+    // Separate claimed and unclaimed assignments
+    const claimedAssignments = existing.filter((a) => a.isClaimed);
+    const claimedMemberIds = new Set(claimedAssignments.map((a) => a.memberId.toString()));
+
+    // Delete only unclaimed assignments
+    for (const a of existing.filter((a) => !a.isClaimed)) {
       await ctx.db.delete(a._id);
     }
 
-    // Get active, non-graduated members
-    const members = await ctx.db
+    // Update period dates on claimed assignments
+    for (const a of claimedAssignments) {
+      await ctx.db.patch(a._id, { periodStart, periodEnd });
+    }
+
+    // Get active, non-graduated members (excluding committee members)
+    const allMembers = await ctx.db
       .query("members")
       .withIndex("by_isActive_isGraduated", (q) =>
         q.eq("isActive", true).eq("isGraduated", false)
       )
       .collect();
 
-    // Get active committee members who do outreach (exclude developers/overseers)
+    // Filter out committee members and members who are already claimed
+    const members = allMembers.filter(
+      (m) => !m.isCommitteeMember && !claimedMemberIds.has(m._id.toString())
+    );
+
+    // Get active committee members who receive assignments (committee_member, president, youth_outreach)
     const allCommittee = await ctx.db
       .query("committeeMembers")
       .withIndex("by_isActive", (q) => q.eq("isActive", true))
       .collect();
 
-    // Filter: only committee_member role (not developer or overseer)
     const committeeMembers = allCommittee.filter((c) => {
       if (isExampleEmail(c.email)) return false;
-      const role = c.role ?? "committee_member";
-      return role === "committee_member";
+      const role = getEffectiveRole(c);
+      return receivesAssignments(role);
     });
 
-    if (members.length === 0) {
+    if (members.length === 0 && claimedAssignments.length === 0) {
       return { error: "No active members to assign" };
     }
     if (committeeMembers.length === 0) {
@@ -729,7 +771,7 @@ export const internalResetAndRegenerate = internalMutation({
       createdAt: number;
     }[] = [];
 
-    // Assign males
+    // Assign males (only unclaimed members)
     const numMaleBuckets = maleCommittee.length;
     if (numMaleBuckets > 0) {
       maleMembers.forEach((member, index) => {
@@ -747,7 +789,7 @@ export const internalResetAndRegenerate = internalMutation({
       });
     }
 
-    // Assign females
+    // Assign females (only unclaimed members)
     const numFemaleBuckets = femaleCommittee.length;
     if (numFemaleBuckets > 0) {
       femaleMembers.forEach((member, index) => {
@@ -765,14 +807,15 @@ export const internalResetAndRegenerate = internalMutation({
       });
     }
 
-    // Insert all assignments
+    // Insert all new assignments
     for (const assignment of assignments) {
       await ctx.db.insert("prayerAssignments", assignment);
     }
 
     return {
       success: true,
-      deletedCount: existing.length,
+      deletedCount: existing.length - claimedAssignments.length,
+      preservedClaimedCount: claimedAssignments.length,
       createdCount: assignments.length,
       periodStart,
       maleAssignments: maleMembers.length,
@@ -808,20 +851,27 @@ export const generateInitialDryRun = query({
       };
     }
 
-    // Get active, non-graduated members
-    const members = await ctx.db
+    // Get active, non-graduated members (excluding committee members)
+    const allMembers = await ctx.db
       .query("members")
       .withIndex("by_isActive_isGraduated", (q) =>
         q.eq("isActive", true).eq("isGraduated", false)
       )
       .collect();
 
-    // Get active committee members (excluding example accounts)
+    // Filter out committee members - they don't need prayer assignments
+    const members = allMembers.filter((m) => !m.isCommitteeMember);
+
+    // Get active committee members who receive assignments (committee_member, president, youth_outreach)
     const allCommittee = await ctx.db
       .query("committeeMembers")
       .withIndex("by_isActive", (q) => q.eq("isActive", true))
       .collect();
-    const committeeMembers = allCommittee.filter((c) => !isExampleEmail(c.email));
+    const committeeMembers = allCommittee.filter((c) => {
+      if (isExampleEmail(c.email)) return false;
+      const role = getEffectiveRole(c);
+      return receivesAssignments(role);
+    });
 
     if (members.length === 0) {
       return {
@@ -977,8 +1027,8 @@ export const rotateBucketsDryRun = query({
 
     for (const prevAssignment of prevAssignments) {
       const member = await ctx.db.get(prevAssignment.memberId);
-      if (!member || !member.isActive || member.isGraduated) {
-        continue;
+      if (!member || !member.isActive || member.isGraduated || member.isCommitteeMember) {
+        continue; // Skip inactive/graduated/committee members
       }
 
       const prevCommittee = await ctx.db.get(prevAssignment.committeeMemberId);

@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { query, mutation, internalMutation } from "./_generated/server";
-import { requireCommitteeMember, isExampleEmail } from "./lib/auth";
+import { requireCommitteeMember, isExampleEmail, receivesAssignments, getEffectiveRole } from "./lib/auth";
 import { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { isSandboxMode, generateMockCommunicationAssignments } from "./lib/sandbox";
@@ -56,10 +56,15 @@ export const getMine = query({
       })
     );
 
-    // Sort by member last name
-    return assignmentsWithDetails.sort((a, b) =>
-      (a.member?.lastName || "").localeCompare(b.member?.lastName || "")
-    );
+    // Sort by priority (high first, then normal, then low), then by last name
+    const priorityOrder: Record<string, number> = { high: 0, normal: 1, low: 2 };
+    return assignmentsWithDetails.sort((a, b) => {
+      const aPriority = a.member?.priority ?? "normal";
+      const bPriority = b.member?.priority ?? "normal";
+      const priorityDiff = priorityOrder[aPriority] - priorityOrder[bPriority];
+      if (priorityDiff !== 0) return priorityDiff;
+      return (a.member?.lastName || "").localeCompare(b.member?.lastName || "");
+    });
   },
 });
 
@@ -176,6 +181,9 @@ export const getMyAssignments = query({
   handler: async (ctx) => {
     const { committeeMember } = await requireCommitteeMember(ctx);
 
+    // Priority order helper for sorting
+    const priorityOrder: Record<string, number> = { high: 0, normal: 1, low: 2 };
+
     // Check if sandbox mode is active
     const sandboxActive = await isSandboxMode(ctx, committeeMember);
     if (sandboxActive) {
@@ -184,9 +192,14 @@ export const getMyAssignments = query({
         ctx,
         committeeMember._id
       );
-      return mockAssignments.sort((a, b) =>
-        (a.member?.lastName || "").localeCompare(b.member?.lastName || "")
-      );
+      // Sort by priority (high first), then by last name
+      return mockAssignments.sort((a, b) => {
+        const aPriority = a.member?.priority ?? "normal";
+        const bPriority = b.member?.priority ?? "normal";
+        const priorityDiff = priorityOrder[aPriority] - priorityOrder[bPriority];
+        if (priorityDiff !== 0) return priorityDiff;
+        return (a.member?.lastName || "").localeCompare(b.member?.lastName || "");
+      });
     }
 
     const assignments = await ctx.db
@@ -209,10 +222,14 @@ export const getMyAssignments = query({
       })
     );
 
-    // Sort by member last name
-    return assignmentsWithDetails.sort((a, b) =>
-      (a.member?.lastName || "").localeCompare(b.member?.lastName || "")
-    );
+    // Sort by priority (high first, then normal, then low), then by last name
+    return assignmentsWithDetails.sort((a, b) => {
+      const aPriority = a.member?.priority ?? "normal";
+      const bPriority = b.member?.priority ?? "normal";
+      const priorityDiff = priorityOrder[aPriority] - priorityOrder[bPriority];
+      if (priorityDiff !== 0) return priorityDiff;
+      return (a.member?.lastName || "").localeCompare(b.member?.lastName || "");
+    });
   },
 });
 
@@ -235,19 +252,26 @@ export const generateInitial = mutation({
     }
 
     // Get active, non-graduated members
-    const members = await ctx.db
+    const allMembers = await ctx.db
       .query("members")
       .withIndex("by_isActive_isGraduated", (q) =>
         q.eq("isActive", true).eq("isGraduated", false)
       )
       .collect();
 
-    // Get active committee members (excluding example accounts)
+    // Filter out committee members - they don't need outreach assignments
+    const members = allMembers.filter((m) => !m.isCommitteeMember);
+
+    // Get active committee members who receive assignments (committee_member, president, youth_outreach)
     const allCommittee = await ctx.db
       .query("committeeMembers")
       .withIndex("by_isActive", (q) => q.eq("isActive", true))
       .collect();
-    const committeeMembers = allCommittee.filter((c) => !isExampleEmail(c.email));
+    const committeeMembers = allCommittee.filter((c) => {
+      if (isExampleEmail(c.email)) return false;
+      const role = getEffectiveRole(c);
+      return receivesAssignments(role);
+    });
 
     if (members.length === 0) {
       throw new Error("No active members to assign");
@@ -320,6 +344,10 @@ export const assignNewMember = mutation({
     }
     if (!member.isActive || member.isGraduated) {
       throw new Error("Member is not active or is graduated");
+    }
+    // Committee members don't receive outreach assignments
+    if (member.isCommitteeMember) {
+      throw new Error("Committee members do not receive communication assignments");
     }
 
     // Check if already has current assignment
@@ -831,12 +859,15 @@ export const generateInitialDryRun = query({
     }
 
     // Get active, non-graduated members
-    const members = await ctx.db
+    const allMembers = await ctx.db
       .query("members")
       .withIndex("by_isActive_isGraduated", (q) =>
         q.eq("isActive", true).eq("isGraduated", false)
       )
       .collect();
+
+    // Filter out committee members - they don't need outreach assignments
+    const members = allMembers.filter((m) => !m.isCommitteeMember);
 
     // Get active committee members (excluding example accounts)
     const allCommittee = await ctx.db
@@ -1117,21 +1148,26 @@ export const resetAll = mutation({
 
 /**
  * Reset and regenerate communication assignments.
- * This deletes existing current assignments and creates new ones with current committee members.
- * Only regular committee members (not developers/overseers) receive assignments.
+ * Preserves claimed assignments and regenerates only unclaimed ones.
+ * Includes: committee_member, president, youth_outreach roles
  */
 export const resetAndRegenerate = mutation({
   args: {},
   handler: async (ctx) => {
     await requireCommitteeMember(ctx);
 
-    // Delete existing current assignments
+    // Get existing current assignments
     const existingAssignments = await ctx.db
       .query("communicationAssignments")
       .withIndex("by_isCurrent", (q) => q.eq("isCurrent", true))
       .collect();
 
-    for (const a of existingAssignments) {
+    // Separate claimed and unclaimed assignments
+    const claimedAssignments = existingAssignments.filter((a) => a.isClaimed);
+    const claimedMemberIds = new Set(claimedAssignments.map((a) => a.memberId.toString()));
+
+    // Mark only unclaimed assignments as not-current
+    for (const a of existingAssignments.filter((a) => !a.isClaimed)) {
       await ctx.db.patch(a._id, {
         isCurrent: false,
         updatedAt: Date.now(),
@@ -1139,27 +1175,31 @@ export const resetAndRegenerate = mutation({
     }
 
     // Get active, non-graduated members
-    const members = await ctx.db
+    const allMembers = await ctx.db
       .query("members")
       .withIndex("by_isActive_isGraduated", (q) =>
         q.eq("isActive", true).eq("isGraduated", false)
       )
       .collect();
 
-    // Get active committee members who do outreach (exclude developers/overseers)
+    // Filter out committee members and members who are already claimed
+    const members = allMembers.filter(
+      (m) => !m.isCommitteeMember && !claimedMemberIds.has(m._id.toString())
+    );
+
+    // Get active committee members who receive assignments (committee_member, president, youth_outreach)
     const allCommittee = await ctx.db
       .query("committeeMembers")
       .withIndex("by_isActive", (q) => q.eq("isActive", true))
       .collect();
 
-    // Filter: only committee_member role (not developer or overseer)
     const committeeMembers = allCommittee.filter((c) => {
       if (isExampleEmail(c.email)) return false;
-      const role = c.role ?? "committee_member";
-      return role === "committee_member";
+      const role = getEffectiveRole(c);
+      return receivesAssignments(role);
     });
 
-    if (members.length === 0) {
+    if (members.length === 0 && claimedAssignments.length === 0) {
       throw new Error("No active members to assign");
     }
     if (committeeMembers.length === 0) {
@@ -1175,7 +1215,7 @@ export const resetAndRegenerate = mutation({
     const now = Date.now();
     let createdCount = 0;
 
-    // Assign male members to male committee (round-robin)
+    // Assign male members to male committee (round-robin) - only unclaimed
     if (maleCommittee.length > 0) {
       for (let i = 0; i < maleMembers.length; i++) {
         const committeeMember = maleCommittee[i % maleCommittee.length];
@@ -1193,7 +1233,7 @@ export const resetAndRegenerate = mutation({
       }
     }
 
-    // Assign female members to female committee (round-robin)
+    // Assign female members to female committee (round-robin) - only unclaimed
     if (femaleCommittee.length > 0) {
       for (let i = 0; i < femaleMembers.length; i++) {
         const committeeMember = femaleCommittee[i % femaleCommittee.length];
@@ -1212,7 +1252,121 @@ export const resetAndRegenerate = mutation({
     }
 
     return {
-      deletedCount: existingAssignments.length,
+      deletedCount: existingAssignments.length - claimedAssignments.length,
+      preservedClaimedCount: claimedAssignments.length,
+      createdCount,
+      maleAssignments: maleMembers.length,
+      femaleAssignments: femaleMembers.length,
+      committeeMembers: committeeMembers.map((c) => `${c.firstName} ${c.lastName}`),
+    };
+  },
+});
+
+/**
+ * Admin reset - callable from CLI without auth.
+ * Preserves claimed assignments and regenerates only unclaimed ones.
+ */
+export const adminResetAndRegenerate = mutation({
+  args: {},
+  handler: async (ctx) => {
+    // Get existing current assignments
+    const existingAssignments = await ctx.db
+      .query("communicationAssignments")
+      .withIndex("by_isCurrent", (q) => q.eq("isCurrent", true))
+      .collect();
+
+    // Separate claimed and unclaimed assignments
+    const claimedAssignments = existingAssignments.filter((a) => a.isClaimed);
+    const claimedMemberIds = new Set(claimedAssignments.map((a) => a.memberId.toString()));
+
+    // Mark only unclaimed assignments as not-current
+    for (const a of existingAssignments.filter((a) => !a.isClaimed)) {
+      await ctx.db.patch(a._id, {
+        isCurrent: false,
+        updatedAt: Date.now(),
+      });
+    }
+
+    // Get active, non-graduated members
+    const allMembers = await ctx.db
+      .query("members")
+      .withIndex("by_isActive_isGraduated", (q) =>
+        q.eq("isActive", true).eq("isGraduated", false)
+      )
+      .collect();
+
+    // Filter out committee members and members who are already claimed
+    const members = allMembers.filter(
+      (m) => !m.isCommitteeMember && !claimedMemberIds.has(m._id.toString())
+    );
+
+    // Get active committee members who receive assignments (committee_member, president, youth_outreach)
+    const allCommittee = await ctx.db
+      .query("committeeMembers")
+      .withIndex("by_isActive", (q) => q.eq("isActive", true))
+      .collect();
+
+    const committeeMembers = allCommittee.filter((c) => {
+      if (isExampleEmail(c.email)) return false;
+      const role = getEffectiveRole(c);
+      return receivesAssignments(role);
+    });
+
+    if (members.length === 0 && claimedAssignments.length === 0) {
+      return { error: "No active members to assign", deletedCount: existingAssignments.length - claimedAssignments.length };
+    }
+    if (committeeMembers.length === 0) {
+      return { error: "No active committee members to assign to", deletedCount: existingAssignments.length - claimedAssignments.length };
+    }
+
+    // Separate by gender
+    const maleMembers = shuffleArray(members.filter((m) => m.gender === "male"));
+    const femaleMembers = shuffleArray(members.filter((m) => m.gender === "female"));
+    const maleCommittee = committeeMembers.filter((c) => c.gender === "male");
+    const femaleCommittee = committeeMembers.filter((c) => c.gender === "female");
+
+    const now = Date.now();
+    let createdCount = 0;
+
+    // Assign male members to male committee (round-robin) - only unclaimed
+    if (maleCommittee.length > 0) {
+      for (let i = 0; i < maleMembers.length; i++) {
+        const committeeMember = maleCommittee[i % maleCommittee.length];
+        await ctx.db.insert("communicationAssignments", {
+          memberId: maleMembers[i]._id,
+          committeeMemberId: committeeMember._id,
+          assignedDate: now,
+          status: "pending",
+          isCurrent: true,
+          isClaimed: false,
+          createdAt: now,
+          updatedAt: now,
+        });
+        createdCount++;
+      }
+    }
+
+    // Assign female members to female committee (round-robin) - only unclaimed
+    if (femaleCommittee.length > 0) {
+      for (let i = 0; i < femaleMembers.length; i++) {
+        const committeeMember = femaleCommittee[i % femaleCommittee.length];
+        await ctx.db.insert("communicationAssignments", {
+          memberId: femaleMembers[i]._id,
+          committeeMemberId: committeeMember._id,
+          assignedDate: now,
+          status: "pending",
+          isCurrent: true,
+          isClaimed: false,
+          createdAt: now,
+          updatedAt: now,
+        });
+        createdCount++;
+      }
+    }
+
+    return {
+      deletedCount: existingAssignments.length - claimedAssignments.length,
+      preservedClaimedCount: claimedAssignments.length,
       createdCount,
       maleAssignments: maleMembers.length,
       femaleAssignments: femaleMembers.length,

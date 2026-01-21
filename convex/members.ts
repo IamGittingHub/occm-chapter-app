@@ -154,6 +154,7 @@ export const create = mutation({
       notes: args.notes,
       isGraduated: false,
       isActive: true,
+      isCommitteeMember: false, // Default - will be synced if they're a committee member
       createdAt: now,
       updatedAt: now,
     });
@@ -214,6 +215,7 @@ export const bulkCreate = mutation({
         notes: member.notes,
         isGraduated: false,
         isActive: true,
+        isCommitteeMember: false, // Default - will be synced if they're a committee member
         createdAt: now,
         updatedAt: now,
       });
@@ -302,6 +304,32 @@ export const toggleActive = mutation({
 
     await ctx.db.patch(args.id, {
       isActive: !member.isActive,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+/**
+ * Set a member's outreach priority.
+ * High priority = not attending regularly, needs more attention
+ * Normal = default priority
+ * Low priority = regular attender, lower outreach priority
+ */
+export const setPriority = mutation({
+  args: {
+    memberId: v.id("members"),
+    priority: v.union(v.literal("high"), v.literal("normal"), v.literal("low")),
+  },
+  handler: async (ctx, { memberId, priority }) => {
+    await requireCommitteeMember(ctx);
+
+    const member = await ctx.db.get(memberId);
+    if (!member) {
+      throw new Error("Member not found");
+    }
+
+    await ctx.db.patch(memberId, {
+      priority,
       updatedAt: Date.now(),
     });
   },

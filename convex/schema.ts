@@ -29,7 +29,16 @@ const communicationStatusValidator = v.union(
 const roleValidator = v.union(
   v.literal("developer"),       // Can see everything, test all features
   v.literal("overseer"),        // Overview dashboard, doesn't do outreach
+  v.literal("president"),       // Team overview + receives assignments
+  v.literal("youth_outreach"),  // Team overview + receives assignments
   v.literal("committee_member") // Regular active member doing outreach
+);
+
+// Member priority for outreach (high = needs more attention, low = regular attender)
+const priorityValidator = v.union(
+  v.literal("high"),   // Not attending regularly - higher priority to contact
+  v.literal("normal"), // Default priority
+  v.literal("low")     // Regular attender - lower priority
 );
 
 export default defineSchema({
@@ -115,6 +124,10 @@ export default defineSchema({
     notes: v.optional(v.string()),
     isGraduated: v.boolean(),
     isActive: v.boolean(),
+    // Track if this member is also a committee member (excludes from communication assignments)
+    isCommitteeMember: v.optional(v.boolean()),
+    // Outreach priority - high for non-attenders, low for regular attenders
+    priority: v.optional(priorityValidator),
     createdAt: v.number(), // Epoch ms
     updatedAt: v.number(), // Epoch ms
     // For migration - original Supabase UUID
@@ -236,4 +249,5 @@ export type Gender = "male" | "female";
 export type Grade = "freshman" | "sophomore" | "junior" | "senior" | "grad" | "unknown";
 export type ContactMethod = "text" | "call" | "email" | "in_person" | "other";
 export type CommunicationStatus = "pending" | "successful" | "transferred";
-export type Role = "developer" | "overseer" | "committee_member";
+export type Role = "developer" | "overseer" | "president" | "youth_outreach" | "committee_member";
+export type Priority = "high" | "normal" | "low";

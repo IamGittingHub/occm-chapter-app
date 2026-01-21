@@ -2,7 +2,10 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { Member } from '@/types/database';
+import { useMutation } from 'convex/react';
+import { api } from '@/convex/_generated/api';
+import { Id } from '@/convex/_generated/dataModel';
+import { Member, Priority } from '@/types/database';
 import { gradeOptions, genderOptions } from '@/lib/validators/member';
 import {
   Table,
@@ -28,7 +31,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Search, MoreHorizontal, Eye, Pencil, Trash2 } from 'lucide-react';
+import { Search, MoreHorizontal, Eye, Pencil, Trash2, AlertCircle, Minus, CheckCircle2 } from 'lucide-react';
+import { useToast } from '@/lib/hooks/use-toast';
+
+const priorityOptions: { value: Priority; label: string; color: string; icon: React.ReactNode }[] = [
+  { value: 'high', label: 'High', color: 'text-red-600 bg-red-50 border-red-200', icon: <AlertCircle className="h-3 w-3" /> },
+  { value: 'normal', label: 'Normal', color: 'text-gray-600 bg-gray-50 border-gray-200', icon: <Minus className="h-3 w-3" /> },
+  { value: 'low', label: 'Low', color: 'text-blue-600 bg-blue-50 border-blue-200', icon: <CheckCircle2 className="h-3 w-3" /> },
+];
 
 interface MemberTableProps {
   members: Member[];
@@ -39,6 +49,24 @@ export function MemberTable({ members, onDelete }: MemberTableProps) {
   const [search, setSearch] = useState('');
   const [gradeFilter, setGradeFilter] = useState<string>('all');
   const [genderFilter, setGenderFilter] = useState<string>('all');
+  const { toast } = useToast();
+  const setPriority = useMutation(api.members.setPriority);
+
+  const handlePriorityChange = async (memberId: string, priority: Priority) => {
+    try {
+      await setPriority({ memberId: memberId as Id<"members">, priority });
+      toast({
+        title: 'Priority updated',
+        description: `Member priority set to ${priority}.`,
+      });
+    } catch (error) {
+      toast({
+        title: 'Error updating priority',
+        description: error instanceof Error ? error.message : 'An unexpected error occurred',
+        variant: 'destructive',
+      });
+    }
+  };
 
   const filteredMembers = members.filter((member) => {
     const matchesSearch =
@@ -115,6 +143,7 @@ export function MemberTable({ members, onDelete }: MemberTableProps) {
               <TableHead>Grade</TableHead>
               <TableHead className="hidden md:table-cell">Major</TableHead>
               <TableHead className="hidden lg:table-cell">Church</TableHead>
+              <TableHead className="hidden md:table-cell">Priority</TableHead>
               <TableHead className="hidden md:table-cell">Status</TableHead>
               <TableHead className="w-[70px]"></TableHead>
             </TableRow>
@@ -122,7 +151,7 @@ export function MemberTable({ members, onDelete }: MemberTableProps) {
           <TableBody>
             {filteredMembers.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="h-24 text-center">
+                <TableCell colSpan={8} className="h-24 text-center">
                   No members found.
                 </TableCell>
               </TableRow>
@@ -155,6 +184,28 @@ export function MemberTable({ members, onDelete }: MemberTableProps) {
                     {member.church || '-'}
                   </TableCell>
                   <TableCell className="hidden md:table-cell">
+                    <Select
+                      value={member.priority || 'normal'}
+                      onValueChange={(value) => handlePriorityChange(member.id, value as Priority)}
+                    >
+                      <SelectTrigger className={`w-[100px] h-8 text-xs ${
+                        priorityOptions.find(p => p.value === (member.priority || 'normal'))?.color
+                      }`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {priorityOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            <div className="flex items-center gap-1.5">
+                              {option.icon}
+                              {option.label}
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </TableCell>
+                  <TableCell className="hidden md:table-cell">
                     <div className="flex gap-1 flex-wrap">
                       {member.is_graduated ? (
                         <Badge variant="secondary">Graduated</Badge>
@@ -165,6 +216,9 @@ export function MemberTable({ members, onDelete }: MemberTableProps) {
                       )}
                       {member.is_new_member && (
                         <Badge className="bg-blue-100 text-blue-800">New</Badge>
+                      )}
+                      {member.is_committee_member && (
+                        <Badge className="bg-gold/20 text-gold border border-gold">Committee</Badge>
                       )}
                     </div>
                   </TableCell>

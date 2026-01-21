@@ -41,9 +41,26 @@ import {
   FileText,
   Users,
   Heart,
-  Sparkles
+  Sparkles,
+  AlertCircle,
+  Minus,
+  CheckCircle2
 } from 'lucide-react';
 import { format } from 'date-fns';
+import { Priority } from '@/types/database';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+
+const priorityOptions: { value: Priority; label: string; description: string; color: string; icon: React.ReactNode }[] = [
+  { value: 'high', label: 'High Priority', description: 'Not attending regularly - needs more attention', color: 'text-red-600 bg-red-50 border-red-200', icon: <AlertCircle className="h-4 w-4" /> },
+  { value: 'normal', label: 'Normal Priority', description: 'Default priority level', color: 'text-gray-600 bg-gray-50 border-gray-200', icon: <Minus className="h-4 w-4" /> },
+  { value: 'low', label: 'Low Priority', description: 'Regular attender - lower outreach priority', color: 'text-blue-600 bg-blue-50 border-blue-200', icon: <CheckCircle2 className="h-4 w-4" /> },
+];
 
 interface MemberDetailProps {
   member: Member;
@@ -60,6 +77,23 @@ export function MemberDetail({ member, editMode = false }: MemberDetailProps) {
   const updateMember = useMutation(api.members.update);
   const removeMember = useMutation(api.members.remove);
   const markGraduated = useMutation(api.members.markGraduated);
+  const setPriorityMutation = useMutation(api.members.setPriority);
+
+  const handlePriorityChange = async (priority: Priority) => {
+    try {
+      await setPriorityMutation({ memberId: member.id as Id<"members">, priority });
+      toast({
+        title: 'Priority updated',
+        description: `Outreach priority set to ${priority}.`,
+      });
+    } catch (error) {
+      toast({
+        title: 'Error updating priority',
+        description: error instanceof Error ? error.message : 'An unexpected error occurred',
+        variant: 'destructive',
+      });
+    }
+  };
 
   const getGradeLabel = (grade: string) => {
     return gradeOptions.find((g) => g.value === grade)?.label || grade;
@@ -196,6 +230,9 @@ export function MemberDetail({ member, editMode = false }: MemberDetailProps) {
                   <Badge className="bg-green-100 text-green-800 text-xs">Active</Badge>
                 ) : (
                   <Badge variant="destructive" className="text-xs">Inactive</Badge>
+                )}
+                {member.is_committee_member && (
+                  <Badge className="bg-gold/20 text-gold border border-gold text-xs">Committee</Badge>
                 )}
               </div>
               <p className="text-muted-foreground text-sm capitalize">
@@ -446,6 +483,42 @@ export function MemberDetail({ member, editMode = false }: MemberDetailProps) {
           </CardContent>
         </Card>
 
+        {/* Outreach Priority */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Outreach Priority</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="space-y-2">
+              <Select
+                value={member.priority || 'normal'}
+                onValueChange={(value) => handlePriorityChange(value as Priority)}
+              >
+                <SelectTrigger className={`w-full ${
+                  priorityOptions.find(p => p.value === (member.priority || 'normal'))?.color
+                }`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {priorityOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      <div className="flex items-center gap-2">
+                        {option.icon}
+                        <div>
+                          <p className="font-medium">{option.label}</p>
+                        </div>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {priorityOptions.find(p => p.value === (member.priority || 'normal'))?.description}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Membership Status */}
         <Card>
           <CardHeader className="pb-3">
@@ -466,6 +539,18 @@ export function MemberDetail({ member, editMode = false }: MemberDetailProps) {
                 <p className="text-xs text-muted-foreground">Status</p>
                 <p className="text-sm font-medium">
                   {member.is_graduated ? 'Graduated' : member.is_active ? 'Active' : 'Inactive'}
+                </p>
+              </div>
+            </div>
+            <Separator />
+            <div className="flex items-center gap-3">
+              <Users className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+              <div>
+                <p className="text-xs text-muted-foreground">Committee Member</p>
+                <p className="text-sm font-medium">
+                  {member.is_committee_member ? (
+                    <span className="text-gold">Yes - excluded from communication assignments</span>
+                  ) : 'No'}
                 </p>
               </div>
             </div>

@@ -20,11 +20,11 @@ export default function DashboardPage() {
   const currentMember = useQuery(api.committeeMembers.getCurrentMember);
   const myRole = useQuery(api.committeeMembers.getMyRole);
 
-  // Only fetch team overview for overseers/developers
-  const isOverseerOrAbove = myRole?.role === 'developer' || myRole?.role === 'overseer';
+  // Team overview access for: developer, overseer, president, youth_outreach
+  const hasTeamOverviewAccess = myRole?.role === 'developer' || myRole?.role === 'overseer' || myRole?.role === 'president' || myRole?.role === 'youth_outreach';
   const overseerDashboard = useQuery(
     api.dashboard.getOverseerDashboard,
-    isOverseerOrAbove ? {} : "skip"
+    hasTeamOverviewAccess ? {} : "skip"
   );
 
   if (stats === undefined || data === undefined) {
@@ -59,7 +59,7 @@ export default function DashboardPage() {
             Welcome back{currentMember ? `, ${currentMember.firstName}` : ''}!
           </h1>
           <p className="text-muted-foreground">
-            {isOverseerOrAbove && viewMode === 'team'
+            {hasTeamOverviewAccess && viewMode === 'team'
               ? 'Team overview and progress.'
               : "Here's what needs your attention today."}
           </p>
@@ -70,7 +70,7 @@ export default function DashboardPage() {
       </div>
 
       {/* View Mode Toggle for Overseers/Developers */}
-      {isOverseerOrAbove && (
+      {hasTeamOverviewAccess && (
         <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as 'my' | 'team')} className="w-fit">
           <TabsList>
             <TabsTrigger value="my">My Dashboard</TabsTrigger>
@@ -80,7 +80,7 @@ export default function DashboardPage() {
       )}
 
       {/* Team Overview (Overseer/Developer only) */}
-      {viewMode === 'team' && isOverseerOrAbove && overseerDashboard && (
+      {viewMode === 'team' && hasTeamOverviewAccess && overseerDashboard && (
         <>
           {/* Overall Stats Row */}
           <div className="grid gap-4 md:grid-cols-4">

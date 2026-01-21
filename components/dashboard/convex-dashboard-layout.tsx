@@ -51,8 +51,14 @@ function DashboardContent({ children }: { children: ReactNode }) {
   const testModeEnabled = testModeSetting === 'true';
   const isSandboxActive = testModeEnabled && isDevOrOverseer;
 
-  const roleLabel = role === 'developer' ? 'Developer' :
-                    role === 'overseer' ? 'Overseer' : null;
+  // Role labels and descriptions for banner
+  const roleConfig: Record<string, { label: string; description: string; color: string }> = {
+    developer: { label: 'Developer', description: 'Full access enabled', color: 'purple' },
+    overseer: { label: 'Overseer', description: 'Overview access only', color: 'purple' },
+    president: { label: 'President', description: 'Team overview + outreach', color: 'blue' },
+    youth_outreach: { label: 'Youth Outreach', description: 'Team overview + outreach', color: 'blue' },
+  };
+  const roleInfo_config = role ? roleConfig[role] : null;
 
   return (
     <div className="min-h-screen bg-warm-white">
@@ -72,13 +78,13 @@ function DashboardContent({ children }: { children: ReactNode }) {
           </div>
         )}
 
-        {/* Role Badge Banner (for developers/overseers not in sandbox) */}
-        {roleLabel && !isSandboxActive && (
-          <div className="bg-purple-100 border-b border-purple-200 px-4 py-2">
-            <div className="flex items-center justify-center gap-2 text-purple-800">
+        {/* Role Badge Banner (for special roles not in sandbox) */}
+        {roleInfo_config && !isSandboxActive && (
+          <div className={`${roleInfo_config.color === 'purple' ? 'bg-purple-100 border-purple-200 text-purple-800' : 'bg-blue-100 border-blue-200 text-blue-800'} border-b px-4 py-2`}>
+            <div className="flex items-center justify-center gap-2">
               <ShieldCheck className="h-4 w-4" />
               <span className="text-sm font-medium">
-                {roleLabel} Mode - {role === 'developer' ? 'Full access enabled' : 'Overview access only'}
+                {roleInfo_config.label} Mode - {roleInfo_config.description}
               </span>
             </div>
           </div>

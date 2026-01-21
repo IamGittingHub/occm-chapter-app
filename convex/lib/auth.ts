@@ -2,6 +2,7 @@ import { QueryCtx, MutationCtx } from "../_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { Role } from "../schema";
+import { internal } from "../_generated/api";
 
 /**
  * Get the authenticated user ID or throw if not authenticated.
@@ -129,6 +130,20 @@ export async function autoLinkCommitteeMemberByEmail(
     updatedAt: Date.now(),
   });
 
+  // Trigger sync to update isCommitteeMember flag in members table
+  await ctx.scheduler.runAfter(
+    0,
+    internal.committeeMemberSync.onCommitteeMemberStatusChange,
+    { committeeMemberId: pendingInvite._id }
+  );
+
+  // Auto-add committee member to members list (if they have committee_member role)
+  await ctx.scheduler.runAfter(
+    0,
+    internal.committeeMemberSync.ensureCommitteeMemberInMembersList,
+    { committeeMemberId: pendingInvite._id }
+  );
+
   // Return the updated committee member
   return await ctx.db.get(pendingInvite._id);
 }
@@ -175,9 +190,27 @@ export function isDeveloper(role: Role): boolean {
 
 /**
  * Check if a role has overseer-level access (overseer or developer).
+ * Note: President and Youth Outreach also have team overview access - use hasTeamOverviewAccess() for that.
  */
 export function isOverseerOrAbove(role: Role): boolean {
   return role === "developer" || role === "overseer";
+}
+
+/**
+ * Check if a role has team overview access (can see all members and their progress).
+ * This includes: developer, overseer, president, youth_outreach
+ */
+export function hasTeamOverviewAccess(role: Role): boolean {
+  return role === "developer" || role === "overseer" || role === "president" || role === "youth_outreach";
+}
+
+/**
+ * Check if a role receives prayer/communication assignments.
+ * This includes: committee_member, president, youth_outreach
+ * Excludes: developer (for testing), overseer (view only)
+ */
+export function receivesAssignments(role: Role): boolean {
+  return role === "committee_member" || role === "president" || role === "youth_outreach";
 }
 
 /**
@@ -215,6 +248,26 @@ export async function requireOverseerOrAbove(
 
   if (!isOverseerOrAbove(role)) {
     throw new Error("Access denied: This action requires overseer or developer privileges");
+  }
+
+  return { userId, committeeMember };
+}
+
+/**
+ * Require the current user to have team overview access.
+ * This includes: developer, overseer, president, youth_outreach
+ */
+export async function requireTeamOverviewAccess(
+  ctx: QueryCtx | MutationCtx
+): Promise<{
+  userId: Id<"users">;
+  committeeMember: Doc<"committeeMembers">;
+}> {
+  const { userId, committeeMember } = await requireCommitteeMember(ctx);
+  const role = getEffectiveRole(committeeMember);
+
+  if (!hasTeamOverviewAccess(role)) {
+    throw new Error("Access denied: This action requires team overview privileges");
   }
 
   return { userId, committeeMember };
