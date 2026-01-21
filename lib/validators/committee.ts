@@ -1,10 +1,12 @@
 import * as z from 'zod';
 
-export const roleValues = ['developer', 'overseer', 'committee_member'] as const;
+export const roleValues = ['developer', 'overseer', 'president', 'youth_outreach', 'committee_member'] as const;
 export type Role = typeof roleValues[number];
 
 export const roleOptions = [
   { value: 'committee_member', label: 'Committee Member' },
+  { value: 'president', label: 'President' },
+  { value: 'youth_outreach', label: 'Youth Outreach' },
   { value: 'overseer', label: 'Overseer' },
   { value: 'developer', label: 'Developer' },
 ] as const;
