@@ -48,12 +48,16 @@ interface CommitteeMemberCardProps {
 const roleLabels: Record<Role, string> = {
   developer: 'Developer',
   overseer: 'Overseer',
+  president: 'President',
+  youth_outreach: 'Youth Outreach',
   committee_member: 'Committee Member',
 };
 
 const roleBadgeClasses: Record<Role, string> = {
   developer: 'bg-purple-100 text-purple-800 hover:bg-purple-100',
   overseer: 'bg-blue-100 text-blue-800 hover:bg-blue-100',
+  president: 'bg-indigo-100 text-indigo-800 hover:bg-indigo-100',
+  youth_outreach: 'bg-teal-100 text-teal-800 hover:bg-teal-100',
   committee_member: '', // Don't show badge for regular members
 };
 
