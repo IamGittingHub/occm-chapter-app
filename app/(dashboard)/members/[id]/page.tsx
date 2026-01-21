@@ -48,6 +48,8 @@ export default function MemberPage() {
     notes: member.notes || null,
     is_graduated: member.isGraduated,
     is_active: member.isActive,
+    is_committee_member: member.isCommitteeMember || false,
+    priority: member.priority || null,
     created_at: new Date(member.createdAt).toISOString(),
     updated_at: new Date(member.updatedAt).toISOString(),
   };

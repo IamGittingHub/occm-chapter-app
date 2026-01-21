@@ -40,6 +40,8 @@ export default function MembersPage() {
     notes: m.notes || null,
     is_graduated: m.isGraduated,
     is_active: m.isActive,
+    is_committee_member: m.isCommitteeMember || false,
+    priority: m.priority || null,
     created_at: new Date(m.createdAt).toISOString(),
     updated_at: new Date(m.updatedAt).toISOString(),
     // Keep _id for Convex operations
