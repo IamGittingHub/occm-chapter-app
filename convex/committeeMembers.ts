@@ -12,12 +12,15 @@ import {
 } from "./lib/auth";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { Doc, Id } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
 
 // Validators
 const genderValidator = v.union(v.literal("male"), v.literal("female"));
 const roleValidator = v.union(
   v.literal("developer"),
   v.literal("overseer"),
+  v.literal("president"),
+  v.literal("youth_outreach"),
   v.literal("committee_member")
 );
 
@@ -182,6 +185,14 @@ export const invite = mutation({
         role: roleToAssign,
         updatedAt: now,
       });
+
+      // Trigger sync to update member's isCommitteeMember flag
+      await ctx.scheduler.runAfter(
+        0,
+        internal.committeeMemberSync.onCommitteeMemberStatusChange,
+        { committeeMemberId: existingActive._id }
+      );
+
       return {
         success: true,
         message: `Invite updated for ${args.firstName} ${args.lastName}. They should visit the app and sign in with Google using ${normalizedEmail}.`,
@@ -189,7 +200,7 @@ export const invite = mutation({
     }
 
     // Create new pending invite (no userId, not active)
-    await ctx.db.insert("committeeMembers", {
+    const newMemberId = await ctx.db.insert("committeeMembers", {
       email: normalizedEmail,
       firstName: args.firstName,
       lastName: args.lastName,
@@ -201,6 +212,20 @@ export const invite = mutation({
       createdAt: now,
       updatedAt: now,
     });
+
+    // Trigger sync to update member's isCommitteeMember flag (if they exist in members table)
+    await ctx.scheduler.runAfter(
+      0,
+      internal.committeeMemberSync.onCommitteeMemberStatusChange,
+      { committeeMemberId: newMemberId }
+    );
+
+    // Auto-add committee member to members list (if they have committee_member role)
+    await ctx.scheduler.runAfter(
+      0,
+      internal.committeeMemberSync.ensureCommitteeMemberInMembersList,
+      { committeeMemberId: newMemberId }
+    );
 
     return {
       success: true,
@@ -267,6 +292,15 @@ export const update = mutation({
     filteredUpdates.updatedAt = Date.now();
 
     await ctx.db.patch(id, filteredUpdates);
+
+    // If isActive changed, trigger sync to update member's isCommitteeMember flag
+    if (args.isActive !== undefined) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.committeeMemberSync.onCommitteeMemberStatusChange,
+        { committeeMemberId: id }
+      );
+    }
   },
 });
 
@@ -331,6 +365,20 @@ export const linkCurrentUserByEmail = mutation({
     if (!result) {
       throw new Error("No pending invite found for your email");
     }
+
+    // Trigger sync to update member's isCommitteeMember flag
+    await ctx.scheduler.runAfter(
+      0,
+      internal.committeeMemberSync.onCommitteeMemberStatusChange,
+      { committeeMemberId: result._id }
+    );
+
+    // Auto-add committee member to members list (if they have committee_member role)
+    await ctx.scheduler.runAfter(
+      0,
+      internal.committeeMemberSync.ensureCommitteeMemberInMembersList,
+      { committeeMemberId: result._id }
+    );
 
     return result;
   },
