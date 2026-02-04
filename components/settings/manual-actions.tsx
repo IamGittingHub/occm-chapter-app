@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useMutation, useQuery } from 'convex/react';
+import { skip, useMutation, useQuery } from 'convex/react';
 import { api } from '@/convex/_generated/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -49,7 +49,10 @@ export function ManualActions() {
   // Dry-run queries for test mode previews
   const rotationPreview = useQuery(api.prayerAssignments.rotateBucketsDryRun, {});
   const transferPreview = useQuery(api.communicationAssignments.processAutoTransfersDryRun, {});
-  const repairDiagnostics = useQuery(api.prayerAssignments.getRepairDiagnostics, {});
+  const repairDiagnostics = useQuery(
+    api.prayerAssignments.getRepairDiagnostics,
+    showRepairDiagnostics ? {} : skip
+  );
 
   async function handleRotation() {
     setIsRotating(true);
