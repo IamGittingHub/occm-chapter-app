@@ -73,6 +73,7 @@ export function MemberDetail({ member, editMode = false }: MemberDetailProps) {
   const [isEditing, setIsEditing] = useState(editMode);
   const [isLoading, setIsLoading] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isNavigatingAway, setIsNavigatingAway] = useState(false);
 
   const updateMember = useMutation(api.members.update);
   const removeMember = useMutation(api.members.remove);
@@ -151,6 +152,8 @@ export function MemberDetail({ member, editMode = false }: MemberDetailProps) {
         description: `${member.first_name} ${member.last_name} has been removed.`,
       });
 
+      // Set flag before navigation to prevent re-render issues
+      setIsNavigatingAway(true);
       router.push('/members');
     } catch (error) {
       toast({
@@ -183,6 +186,15 @@ export function MemberDetail({ member, editMode = false }: MemberDetailProps) {
     }
 
     setIsLoading(false);
+  }
+
+  // Show loading spinner while navigating away after delete
+  if (isNavigatingAway) {
+    return (
+      <div className="flex items-center justify-center min-h-[50vh]">
+        <Loader2 className="h-8 w-8 animate-spin text-soft-blue" />
+      </div>
+    );
   }
 
   if (isEditing) {

@@ -4,7 +4,7 @@ import { useQuery } from 'convex/react';
 import { api } from '@/convex/_generated/api';
 import { Id } from '@/convex/_generated/dataModel';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
-import { useEffect } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { MemberDetail } from '@/components/members/member-detail';
 import { Loader2 } from 'lucide-react';
 
@@ -14,16 +14,19 @@ export default function MemberPage() {
   const router = useRouter();
   const id = params.id as string;
   const edit = searchParams.get('edit');
+  const isRedirecting = useRef(false);
 
   const member = useQuery(api.members.getById, { id: id as Id<"members"> });
 
   useEffect(() => {
-    if (member === null) {
+    if (member === null && !isRedirecting.current) {
+      isRedirecting.current = true;
       router.replace('/members');
     }
   }, [member, router]);
 
-  if (member === undefined) {
+  // Show loading while undefined or redirecting
+  if (member === undefined || isRedirecting.current) {
     return (
       <div className="flex items-center justify-center min-h-[50vh]">
         <Loader2 className="h-8 w-8 animate-spin text-soft-blue" />

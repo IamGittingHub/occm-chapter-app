@@ -11,6 +11,7 @@
 import type * as appSettings from "../appSettings.js";
 import type * as auth from "../auth.js";
 import type * as claims from "../claims.js";
+import type * as committeeMemberSync from "../committeeMemberSync.js";
 import type * as committeeMembers from "../committeeMembers.js";
 import type * as communicationAssignments from "../communicationAssignments.js";
 import type * as communicationLogs from "../communicationLogs.js";
@@ -35,6 +36,7 @@ declare const fullApi: ApiFromModules<{
   appSettings: typeof appSettings;
   auth: typeof auth;
   claims: typeof claims;
+  committeeMemberSync: typeof committeeMemberSync;
   committeeMembers: typeof committeeMembers;
   communicationAssignments: typeof communicationAssignments;
   communicationLogs: typeof communicationLogs;
