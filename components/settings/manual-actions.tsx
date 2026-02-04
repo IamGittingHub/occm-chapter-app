@@ -25,7 +25,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useToast } from '@/lib/hooks/use-toast';
-import { Loader2, RotateCcw, ArrowRightLeft, Trash2, FlaskConical, Eye } from 'lucide-react';
+import { Loader2, RotateCcw, ArrowRightLeft, Trash2, FlaskConical, Eye, Wrench } from 'lucide-react';
 
 export function ManualActions() {
   const { toast } = useToast();
@@ -34,6 +34,8 @@ export function ManualActions() {
   const [isResetting, setIsResetting] = useState(false);
   const [showRotationPreview, setShowRotationPreview] = useState(false);
   const [showTransferPreview, setShowTransferPreview] = useState(false);
+  const [showRepairDiagnostics, setShowRepairDiagnostics] = useState(false);
+  const [isRepairing, setIsRepairing] = useState(false);
 
   const settings = useQuery(api.appSettings.getAll);
   const testMode = settings?.test_mode === 'true';
@@ -42,10 +44,12 @@ export function ManualActions() {
   const triggerAutoTransfers = useMutation(api.communicationAssignments.triggerAutoTransfers);
   const resetPrayerAssignments = useMutation(api.prayerAssignments.resetAll);
   const resetCommunicationAssignments = useMutation(api.communicationAssignments.resetAll);
+  const repairPrayerAssignments = useMutation(api.prayerAssignments.repairCurrentPeriod);
 
   // Dry-run queries for test mode previews
   const rotationPreview = useQuery(api.prayerAssignments.rotateBucketsDryRun, {});
   const transferPreview = useQuery(api.communicationAssignments.processAutoTransfersDryRun, {});
+  const repairDiagnostics = useQuery(api.prayerAssignments.getRepairDiagnostics, {});
 
   async function handleRotation() {
     setIsRotating(true);
@@ -101,6 +105,28 @@ export function ManualActions() {
       });
     }
     setIsResetting(false);
+  }
+
+  async function handleRepairAssignments() {
+    setIsRepairing(true);
+    try {
+      const result = await repairPrayerAssignments({});
+      const skippedNote = result.skippedReasons?.length
+        ? ` Skipped: ${result.skippedReasons.slice(0, 2).join(' | ')}${result.skippedReasons.length > 2 ? '…' : ''}`
+        : '';
+
+      toast({
+        title: 'Repair Complete',
+        description: `Backfilled ${result.backfilledCount}, reassigned ${result.reassignedCount}. Zero assignments: ${result.zeroBefore} → ${result.zeroAfter}.${skippedNote}`,
+      });
+    } catch (error) {
+      toast({
+        title: 'Repair Failed',
+        description: error instanceof Error ? error.message : 'An unexpected error occurred',
+        variant: 'destructive',
+      });
+    }
+    setIsRepairing(false);
   }
 
   return (
@@ -211,6 +237,53 @@ export function ManualActions() {
             </AlertDialogContent>
           </AlertDialog>
         )}
+      </div>
+
+      {/* Repair Prayer Assignments */}
+      <div className="flex items-center justify-between p-4 border rounded-lg">
+        <div>
+          <h4 className="font-medium flex items-center gap-2">
+            Repair Prayer Lists
+          </h4>
+          <p className="text-sm text-muted-foreground">
+            Backfill missing assignments and rebalance unclaimed ones
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => setShowRepairDiagnostics(true)}>
+            <Eye className="mr-2 h-4 w-4" />
+            Diagnostics
+          </Button>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline" disabled={isRepairing}>
+                {isRepairing ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Wrench className="mr-2 h-4 w-4" />
+                )}
+                Repair
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Repair Prayer Lists</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will backfill missing prayer assignments and rebalance unclaimed assignments
+                  so committee members with zero assignments receive at least one.
+                  <br /><br />
+                  Claimed assignments will not be moved.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={handleRepairAssignments}>
+                  Repair Now
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
       </div>
 
       {/* Reset All Assignments */}
@@ -359,6 +432,50 @@ export function ManualActions() {
                   No members are past the threshold. No transfers needed.
                 </div>
               )
+            ) : (
+              <div className="flex items-center justify-center p-8">
+                <Loader2 className="h-6 w-6 animate-spin" />
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Repair Diagnostics Dialog */}
+      <Dialog open={showRepairDiagnostics} onOpenChange={setShowRepairDiagnostics}>
+        <DialogContent className="max-w-2xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FlaskConical className="h-5 w-5 text-purple-600" />
+              Prayer Repair Diagnostics
+            </DialogTitle>
+            <DialogDescription>
+              Snapshot of current prayer assignment coverage for this month.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {repairDiagnostics ? (
+              <>
+                <div className="bg-muted p-3 rounded-lg text-sm space-y-1">
+                  <div><strong>Period:</strong> {repairDiagnostics.periodStart}</div>
+                  <div><strong>Assignments exist:</strong> {repairDiagnostics.hasAssignmentsForPeriod ? 'Yes' : 'No'}</div>
+                  <div><strong>Eligible members:</strong> {repairDiagnostics.eligibleMembersByGender.male} male / {repairDiagnostics.eligibleMembersByGender.female} female</div>
+                  <div><strong>Committee (eligible):</strong> {repairDiagnostics.committeeMembersByGender.male} male / {repairDiagnostics.committeeMembersByGender.female} female</div>
+                  <div><strong>Members missing assignment:</strong> {repairDiagnostics.membersMissingAssignment}</div>
+                  <div><strong>Committee with zero assignments:</strong> {repairDiagnostics.committeeMembersWithZeroAssignments.length}</div>
+                </div>
+                {repairDiagnostics.committeeMembersWithZeroAssignments.length > 0 && (
+                  <ScrollArea className="h-[220px] border rounded-lg p-3">
+                    <div className="space-y-2 text-sm">
+                      {repairDiagnostics.committeeMembersWithZeroAssignments.map((cm) => (
+                        <div key={cm.committeeMemberId} className="p-2 bg-muted/50 rounded">
+                          {cm.name} ({cm.email}) - {cm.gender}
+                        </div>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                )}
+              </>
             ) : (
               <div className="flex items-center justify-center p-8">
                 <Loader2 className="h-6 w-6 animate-spin" />

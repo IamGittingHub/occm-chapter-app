@@ -282,8 +282,13 @@ export const markGraduated = mutation({
   handler: async (ctx, args) => {
     await requireCommitteeMember(ctx);
 
+    const member = await ctx.db.get(args.id);
+    if (!member) {
+      throw new Error("Member not found");
+    }
+
     await ctx.db.patch(args.id, {
-      isGraduated: true,
+      isGraduated: !member.isGraduated,
       updatedAt: Date.now(),
     });
   },

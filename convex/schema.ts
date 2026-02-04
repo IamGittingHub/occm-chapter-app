@@ -228,6 +228,22 @@ export default defineSchema({
     .index("by_toCommitteeMemberId", ["toCommitteeMemberId"])
     .index("by_legacyId", ["legacyId"]),
 
+  // Assignment Repair Logs - Audit trail for prayer assignment repairs
+  assignmentRepairLogs: defineTable({
+    performedByCommitteeMemberId: v.id("committeeMembers"),
+    periodStart: v.string(),
+    createdAt: v.number(), // Epoch ms
+    backfilledCount: v.number(),
+    reassignedCount: v.number(),
+    zeroBefore: v.number(),
+    zeroAfter: v.number(),
+    skippedReasons: v.array(v.string()),
+    notes: v.optional(v.string()),
+  })
+    .index("by_periodStart", ["periodStart"])
+    .index("by_performedBy", ["performedByCommitteeMemberId"])
+    .index("by_createdAt", ["createdAt"]),
+
   // App Settings - Configuration key-value store (org-scoped or global)
   appSettings: defineTable({
     // Organization this setting belongs to (null for global settings)

@@ -1160,6 +1160,335 @@ export const getStats = query({
 });
 
 /**
+ * Diagnostics for repairing prayer assignments in the current period.
+ * Optional committeeEmail highlights a specific committee member (e.g., Nathan).
+ */
+export const getRepairDiagnostics = query({
+  args: { committeeEmail: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    await requireCommitteeMember(ctx);
+
+    const { periodStart } = getPeriodDates(new Date());
+
+    const assignments = await ctx.db
+      .query("prayerAssignments")
+      .withIndex("by_periodStart", (q) => q.eq("periodStart", periodStart))
+      .collect();
+
+    const assignmentMemberIds = new Set(assignments.map((a) => a.memberId));
+    const firstAssignmentCreatedAt =
+      assignments.length > 0
+        ? Math.min(...assignments.map((a) => a.createdAt))
+        : null;
+
+    const allMembers = await ctx.db.query("members").collect();
+    const eligibleMembers = allMembers.filter(
+      (m) => m.isActive && !m.isGraduated && !m.isCommitteeMember
+    );
+
+    const eligibleMembersByGender = {
+      male: eligibleMembers.filter((m) => m.gender === "male").length,
+      female: eligibleMembers.filter((m) => m.gender === "female").length,
+    };
+
+    const allCommittee = await ctx.db
+      .query("committeeMembers")
+      .withIndex("by_isActive", (q) => q.eq("isActive", true))
+      .collect();
+
+    const eligibleCommittee = allCommittee.filter((c) => {
+      if (isExampleEmail(c.email)) return false;
+      const role = getEffectiveRole(c);
+      return receivesAssignments(role);
+    });
+
+    const committeeMembersByGender = {
+      male: eligibleCommittee.filter((c) => c.gender === "male").length,
+      female: eligibleCommittee.filter((c) => c.gender === "female").length,
+    };
+
+    const assignmentCounts: Record<string, number> = {};
+    for (const cm of eligibleCommittee) {
+      assignmentCounts[cm._id] = 0;
+    }
+    for (const a of assignments) {
+      if (assignmentCounts[a.committeeMemberId] !== undefined) {
+        assignmentCounts[a.committeeMemberId]++;
+      }
+    }
+
+    const assignmentCountsByCommitteeMember = eligibleCommittee
+      .map((cm) => ({
+        committeeMemberId: cm._id,
+        name: `${cm.firstName} ${cm.lastName}`,
+        email: cm.email,
+        role: getEffectiveRole(cm),
+        gender: cm.gender,
+        isActive: cm.isActive,
+        createdAt: cm.createdAt,
+        assignmentCount: assignmentCounts[cm._id] ?? 0,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    const committeeMembersWithZeroAssignments = assignmentCountsByCommitteeMember.filter(
+      (cm) => cm.assignmentCount === 0
+    );
+
+    const membersMissingAssignment = eligibleMembers.filter(
+      (m) => !assignmentMemberIds.has(m._id)
+    ).length;
+
+    let targetCommitteeMember: null | {
+      committeeMemberId: Id<"committeeMembers">;
+      name: string;
+      email: string;
+      role: string;
+      gender: string;
+      isActive: boolean;
+      createdAt: number;
+      updatedAt: number;
+      assignmentCount: number;
+      receivesAssignments: boolean;
+      createdAfterFirstAssignment: boolean | null;
+    } = null;
+
+    if (args.committeeEmail) {
+      const normalized = args.committeeEmail.toLowerCase().trim();
+      const target = allCommittee.find(
+        (c) => c.email?.toLowerCase().trim() === normalized
+      );
+      if (target) {
+        const role = getEffectiveRole(target);
+        const receives = receivesAssignments(role);
+        const count = assignmentCounts[target._id] ?? 0;
+        targetCommitteeMember = {
+          committeeMemberId: target._id,
+          name: `${target.firstName} ${target.lastName}`,
+          email: target.email,
+          role,
+          gender: target.gender,
+          isActive: target.isActive,
+          createdAt: target.createdAt,
+          updatedAt: target.updatedAt,
+          assignmentCount: count,
+          receivesAssignments: receives,
+          createdAfterFirstAssignment:
+            firstAssignmentCreatedAt !== null
+              ? target.createdAt > firstAssignmentCreatedAt
+              : null,
+        };
+      }
+    }
+
+    return {
+      periodStart,
+      hasAssignmentsForPeriod: assignments.length > 0,
+      firstAssignmentCreatedAt,
+      eligibleMembersByGender,
+      committeeMembersByGender,
+      assignmentCountsByCommitteeMember,
+      membersMissingAssignment,
+      committeeMembersWithZeroAssignments,
+      targetCommitteeMember,
+    };
+  },
+});
+
+/**
+ * Repair current period prayer assignments.
+ * Backfills missing member assignments and rebalances unclaimed assignments
+ * to ensure committee members with zero assignments receive at least one.
+ */
+export const repairCurrentPeriod = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const { committeeMember } = await requireCommitteeMember(ctx);
+
+    const { periodStart, periodEnd } = getPeriodDates(new Date());
+    const now = Date.now();
+
+    const allAssignments = await ctx.db
+      .query("prayerAssignments")
+      .withIndex("by_periodStart", (q) => q.eq("periodStart", periodStart))
+      .collect();
+
+    const allMembers = await ctx.db.query("members").collect();
+    const membersById = new Map(allMembers.map((m) => [m._id, m]));
+
+    const eligibleMembers = allMembers.filter(
+      (m) => m.isActive && !m.isGraduated && !m.isCommitteeMember
+    );
+
+    const allCommittee = await ctx.db
+      .query("committeeMembers")
+      .withIndex("by_isActive", (q) => q.eq("isActive", true))
+      .collect();
+
+    const eligibleCommittee = allCommittee.filter((c) => {
+      if (isExampleEmail(c.email)) return false;
+      const role = getEffectiveRole(c);
+      return receivesAssignments(role);
+    });
+
+    const committeeByGender = {
+      male: eligibleCommittee.filter((c) => c.gender === "male"),
+      female: eligibleCommittee.filter((c) => c.gender === "female"),
+    };
+
+    const assignmentCounts: Record<string, number> = {};
+    for (const cm of eligibleCommittee) {
+      assignmentCounts[cm._id] = 0;
+    }
+
+    const assignedMemberIds = new Set<string>();
+    const unclaimedByCommittee: Record<string, Id<"prayerAssignments">[]> = {};
+    for (const cm of eligibleCommittee) {
+      unclaimedByCommittee[cm._id] = [];
+    }
+
+    for (const a of allAssignments) {
+      assignedMemberIds.add(a.memberId.toString());
+      if (assignmentCounts[a.committeeMemberId] !== undefined) {
+        assignmentCounts[a.committeeMemberId]++;
+      }
+      if (!a.isClaimed && unclaimedByCommittee[a.committeeMemberId]) {
+        const member = membersById.get(a.memberId);
+        if (member) {
+          unclaimedByCommittee[a.committeeMemberId].push(a._id);
+        }
+      }
+    }
+
+    const skippedReasons: string[] = [];
+    let backfilledCount = 0;
+    let reassignedCount = 0;
+
+    const missingMembers = eligibleMembers.filter(
+      (m) => !assignedMemberIds.has(m._id.toString())
+    );
+
+    const pickLeastLoaded = (list: typeof eligibleCommittee) => {
+      let selected = list[0];
+      let minCount = assignmentCounts[selected._id] ?? 0;
+      for (const cm of list) {
+        const count = assignmentCounts[cm._id] ?? 0;
+        if (count < minCount) {
+          minCount = count;
+          selected = cm;
+        }
+      }
+      return { selected, minCount };
+    };
+
+    // Backfill missing assignments
+    for (const member of missingMembers) {
+      const sameGenderCommittee =
+        member.gender === "male" ? committeeByGender.male : committeeByGender.female;
+
+      if (sameGenderCommittee.length === 0) {
+        skippedReasons.push(
+          `No active ${member.gender} committee members available for ${member.firstName} ${member.lastName}`
+        );
+        continue;
+      }
+
+      const { selected, minCount } = pickLeastLoaded(sameGenderCommittee);
+      const bucketNumber = minCount + 1;
+
+      const assignmentId = await ctx.db.insert("prayerAssignments", {
+        memberId: member._id,
+        committeeMemberId: selected._id,
+        bucketNumber,
+        periodStart,
+        periodEnd,
+        isClaimed: false,
+        createdAt: now,
+      });
+
+      backfilledCount++;
+      assignedMemberIds.add(member._id.toString());
+      assignmentCounts[selected._id] = (assignmentCounts[selected._id] ?? 0) + 1;
+      unclaimedByCommittee[selected._id].push(assignmentId);
+    }
+
+    const zeroBefore = eligibleCommittee.filter(
+      (cm) => (assignmentCounts[cm._id] ?? 0) === 0
+    ).length;
+
+    // Rebalance to give zero-assignment committee members at least one unclaimed assignment
+    const zeroCommittee = eligibleCommittee.filter(
+      (cm) => (assignmentCounts[cm._id] ?? 0) === 0
+    );
+
+    const pickDonor = (gender: "male" | "female") => {
+      const pool = gender === "male" ? committeeByGender.male : committeeByGender.female;
+      let donor: typeof eligibleCommittee[number] | null = null;
+      let maxCount = -1;
+      for (const cm of pool) {
+        const count = assignmentCounts[cm._id] ?? 0;
+        const hasUnclaimed = unclaimedByCommittee[cm._id]?.length > 0;
+        if (hasUnclaimed && count > maxCount) {
+          maxCount = count;
+          donor = cm;
+        }
+      }
+      return donor;
+    };
+
+    for (const recipient of zeroCommittee) {
+      const donor = pickDonor(recipient.gender);
+      if (!donor) {
+        skippedReasons.push(
+          `No unclaimed assignments available to reassign to ${recipient.firstName} ${recipient.lastName}`
+        );
+        continue;
+      }
+
+      const assignmentId = unclaimedByCommittee[donor._id].shift();
+      if (!assignmentId) {
+        skippedReasons.push(
+          `No unclaimed assignments available to reassign to ${recipient.firstName} ${recipient.lastName}`
+        );
+        continue;
+      }
+
+      await ctx.db.patch(assignmentId, {
+        committeeMemberId: recipient._id,
+      });
+
+      reassignedCount++;
+      assignmentCounts[donor._id] = (assignmentCounts[donor._id] ?? 0) - 1;
+      assignmentCounts[recipient._id] = (assignmentCounts[recipient._id] ?? 0) + 1;
+      unclaimedByCommittee[recipient._id].push(assignmentId);
+    }
+
+    const zeroAfter = eligibleCommittee.filter(
+      (cm) => (assignmentCounts[cm._id] ?? 0) === 0
+    ).length;
+
+    await ctx.db.insert("assignmentRepairLogs", {
+      performedByCommitteeMemberId: committeeMember._id,
+      periodStart,
+      createdAt: now,
+      backfilledCount,
+      reassignedCount,
+      zeroBefore,
+      zeroAfter,
+      skippedReasons,
+    });
+
+    return {
+      periodStart,
+      backfilledCount,
+      reassignedCount,
+      zeroBefore,
+      zeroAfter,
+      skippedReasons,
+    };
+  },
+});
+
+/**
  * Get assignments for the current user (with member details).
  * In sandbox mode (test mode + developer/overseer), returns mock data.
  */

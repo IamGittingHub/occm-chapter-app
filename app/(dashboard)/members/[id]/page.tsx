@@ -3,17 +3,25 @@
 import { useQuery } from 'convex/react';
 import { api } from '@/convex/_generated/api';
 import { Id } from '@/convex/_generated/dataModel';
-import { useParams, useSearchParams, notFound } from 'next/navigation';
+import { useParams, useSearchParams, useRouter } from 'next/navigation';
+import { useEffect } from 'react';
 import { MemberDetail } from '@/components/members/member-detail';
 import { Loader2 } from 'lucide-react';
 
 export default function MemberPage() {
   const params = useParams();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const id = params.id as string;
   const edit = searchParams.get('edit');
 
   const member = useQuery(api.members.getById, { id: id as Id<"members"> });
+
+  useEffect(() => {
+    if (member === null) {
+      router.replace('/members');
+    }
+  }, [member, router]);
 
   if (member === undefined) {
     return (
@@ -24,7 +32,11 @@ export default function MemberPage() {
   }
 
   if (member === null) {
-    notFound();
+    return (
+      <div className="flex items-center justify-center min-h-[50vh] text-muted-foreground">
+        Member not found. Redirecting...
+      </div>
+    );
   }
 
   // Transform Convex member to the expected Member type format
